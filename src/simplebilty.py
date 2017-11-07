@@ -207,6 +207,15 @@ class SimpleBiltyTagger(object):
         assert(len(train_X)==len(train_Y))
         train_data = list(zip(train_X,train_Y))
 
+        # if we use target vectors, keep track of the targets per sentence
+        if trg_vectors is not None:
+            trg_start_id = 0
+            sentence_trg_vectors = []
+            for i, (example, y) in enumerate(train_data):
+                sentence_trg_vectors.append(trg_vectors[trg_start_id:trg_start_id+len(y), :])
+                trg_start_id += len(y)
+            print('Length of trg vectors:', len(trg_vectors), 'final id:', trg_start_id)
+
         print('Starting training for %d epochs...' % num_epochs)
         best_val_acc, epochs_no_improvement = 0., 0
         if val_X is not None and val_Y is not None and model_path is not None:
@@ -216,9 +225,13 @@ class SimpleBiltyTagger(object):
                       max=len(train_data), flush=True)
             total_loss=0.0
             total_tagged=0.0
-            random.shuffle(train_data)
-            trg_start_id = 0
-            for i, ((word_indices,char_indices), y) in enumerate(train_data):
+
+            random_indices = np.arange(len(train_data))
+            random.shuffle(random_indices)
+
+            for i, idx in enumerate(random_indices):
+                (word_indices, char_indices), y = train_data[idx]
+
                 if word_dropout_rate > 0.0:
                     word_indices = [self.w2i["_UNK"] if
                                         (random.random() > (widCount.get(w)/(word_dropout_rate+widCount.get(w))))
@@ -236,12 +249,11 @@ class SimpleBiltyTagger(object):
                 if trg_vectors is not None:
                     # the consistency loss in temporal ensembling is used for
                     # both supervised and unsupervised input
-                    targets = trg_vectors[trg_start_id:trg_start_id+len(y), :]
+                    targets = sentence_trg_vectors[idx]
                     other_loss = unsup_weight * dynet.average(
                         [dynet.squared_distance(o, dynet.inputVector(t))
                          for o, t in zip(output, targets)])
                     loss += other_loss
-                    trg_start_id += len(y)
 
                 total_loss += loss.value()
                 total_tagged += len(word_indices)
