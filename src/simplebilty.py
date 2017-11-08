@@ -207,14 +207,15 @@ class SimpleBiltyTagger(object):
         assert(len(train_X)==len(train_Y))
         train_data = list(zip(train_X,train_Y))
 
-        # if we use target vectors, keep track of the targets per sentence
+        # if we use target vectors, keep track of the targets per sentence
         if trg_vectors is not None:
             trg_start_id = 0
             sentence_trg_vectors = []
             for i, (example, y) in enumerate(train_data):
-                sentence_trg_vectors.append(trg_vectors[trg_start_id:trg_start_id+len(y), :])
-                trg_start_id += len(y)
-            print('Length of trg vectors:', len(trg_vectors), 'final id:', trg_start_id)
+                sentence_trg_vectors.append(trg_vectors[trg_start_id:trg_start_id+len(example[0]), :])
+                trg_start_id += len(example[0])
+            assert trg_start_id == len(trg_vectors),\
+                'Error: Idx %d is not at %d.' % (trg_start_id, len(trg_vectors))
 
         print('Starting training for %d epochs...' % num_epochs)
         best_val_acc, epochs_no_improvement = 0., 0
@@ -250,6 +251,7 @@ class SimpleBiltyTagger(object):
                     # the consistency loss in temporal ensembling is used for
                     # both supervised and unsupervised input
                     targets = sentence_trg_vectors[idx]
+                    assert len(output) == len(targets)
                     other_loss = unsup_weight * dynet.average(
                         [dynet.squared_distance(o, dynet.inputVector(t))
                          for o, t in zip(output, targets)])
