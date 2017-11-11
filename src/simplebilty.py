@@ -35,12 +35,12 @@ def main():
     parser.add_argument("--h_dim", help="hidden dimension [default: 100]", required=False,type=int,default=100)
     parser.add_argument("--h_layers", help="number of stacked LSTMs [default: 1 = no stacking]", required=False,type=int,default=1)
     parser.add_argument("--test", help="test file", required=False)
-    parser.add_argument("--dev", help="dev file(s)", required=False)
+    parser.add_argument("--dev", help="dev file", required=False)
     parser.add_argument("--save", help="save model to file (appends .model as well as .pickle)", required=False,default=None)
     parser.add_argument("--embeds", help="word embeddings file", required=False, default=None)
     parser.add_argument("--sigma", help="noise sigma", required=False, default=0.2, type=float)
     parser.add_argument("--ac", help="activation function [rectify, tanh, ...]", default="tanh", type=MyNNTaggerArgumentOptions.acfunct)
-    parser.add_argument("--trainer", help="trainer [sgd, adam] default: adam", required=False, default="sgd")
+    parser.add_argument("--trainer", help="trainer [sgd, adam] default: adam", required=False, default="adam")
     parser.add_argument("--learning-rate", help="learning rate [0: use default]", default=0, type=float) # see: http://dynet.readthedocs.io/en/latest/optimizers.html
     parser.add_argument("--dynet-seed", help="random seed for dynet (needs to be first argument!)", required=False, type=int)
     parser.add_argument("--dynet-mem", help="memory for dynet (needs to be first argument!)", required=False, type=int)
@@ -76,13 +76,18 @@ def main():
         ## read data
         train_X, train_Y = tagger.get_train_data(args.train)
 
-
         if args.dev:
             dev_X, dev_Y = tagger.get_data_as_indices(args.dev)
 
-        tagger.fit(train_X, train_Y, args.iters, args.trainer, learning_rate=args.learning_rate, seed=args.dynet_seed, word_dropout_rate=args.word_dropout_rate)
+        if args.model:
+            # load models from existing file
+            tagger.reload_parameters(args.model)
+        else:
+            tagger.initialize_graph()
+        tagger.fit(train_X, train_Y, args.iters, args.trainer,
+                   learning_rate=args.learning_rate, seed=args.dynet_seed, word_dropout_rate=args.word_dropout_rate)
         if args.save:
-            save_tagger(tagger, args.model)
+            save_tagger(tagger, args.save)
 
     if args.test:
         stdout = sys.stdout
@@ -96,11 +101,7 @@ def main():
         print(("Done. Took {0:.2f} seconds.".format(time.time()-start)),file=sys.stderr)
         sys.stdout = stdout
 
-    if args.ac:
-        activation=args.ac.__name__
-    else:
-        activation="None"
-    print("Info: biLSTM\n\t" + "\n\t".join(["{}: {}".format(a, v) for a, v in vars(args).items()
+    print("Info: biLSTM\n\t" + "\n\t".join(["{}: {}".format(a, str(v)) for a, v in vars(args).items()
                                             if a not in ["train", "test", "dev", "pred_layer"]]), file=sys.stderr)
 
     if args.save_embeds:
@@ -303,11 +304,11 @@ class SimpleBiltyTagger(object):
             num_words=len(set(embeddings.keys()).union(set(self.w2i.keys()))) # initialize all with embeddings
             # init model parameters and initialize them
             self.wembeds = self.model.add_lookup_parameters(
-                (num_words, self.in_dim),init=dynet.ConstInitializer(0.01))
+                (num_words, self.in_dim),init=dynet.ConstInitializer(0.01), name="wembeds".encode("utf-8"))
 
             if self.c_in_dim > 0:
                 self.cembeds = self.model.add_lookup_parameters(
-                    (num_chars, self.c_in_dim),init=dynet.ConstInitializer(0.01))
+                    (num_chars, self.c_in_dim),init=dynet.ConstInitializer(0.01), name="cembeds".encode("utf-8"))
                
             init=0
             l = len(embeddings.keys())
@@ -323,12 +324,12 @@ class SimpleBiltyTagger(object):
 
         else:
             self.wembeds = self.model.add_lookup_parameters(
-                (num_words, self.in_dim),init=dynet.ConstInitializer(0.01))
+                (num_words, self.in_dim),init=dynet.ConstInitializer(0.01), name="wembeds".encode("utf-8"))
             if self.c_in_dim > 0:
                 self.cembeds = self.model.add_lookup_parameters(
-                    (num_chars, self.c_in_dim),init=dynet.ConstInitializer(0.01))
+                    (num_chars, self.c_in_dim),init=dynet.ConstInitializer(0.01), name="cembeds".encode("utf-8"))
 
-        #make it more flexible to add number of layers as specified by parameter
+        # make it more flexible to add number of layers as specified by parameter
         layers = [] # inner layers
 
         for layer_num in range(0,self.h_layers):
@@ -347,7 +348,7 @@ class SimpleBiltyTagger(object):
                 b_builder = dynet.LSTMBuilder(1, self.h_dim, self.h_dim, self.model)
                 layers.append(BiRNNSequencePredictor(f_builder,b_builder))
 
-       # store at which layer to predict task
+        # store at which layer to predict task
         task_num_labels= len(self.tag2idx)
         output_layer = FFSequencePredictor(Layer(self.model, self.h_dim*2, task_num_labels, dynet.softmax))
 
@@ -460,7 +461,6 @@ class SimpleBiltyTagger(object):
         output_expected_at_layer -=1
 
         # go through layers
-        # input is now combination of w + char emb
         prev = features
         prev_rev = features
         num_layers = self.h_layers
@@ -506,6 +506,9 @@ class SimpleBiltyTagger(object):
         return correct, total
 
     def get_predictions(self, test_X, soft_labels=False):
+        """
+        get flat list of predictions
+        """
         predictions = []
         for word_indices, word_char_indices in test_X:
             output = self.predict(word_indices, word_char_indices)
@@ -524,18 +527,33 @@ class SimpleBiltyTagger(object):
         X = []
         Y = []
 
-        # word 2 indices and tag 2 indices
-        w2i = self.w2i.copy()  # get a copy that refers to a different object
-        c2i = {}  # char to index
-        tag2idx = {}  # tag2idx
+        # check if we continue training
+        continue_training = False
+        if self.w2i and self.tag2idx:
+            continue_training = True
 
-        if len(w2i) > 0:
-            assert w2i["_UNK"] == 0
+        if continue_training:
+            print("update existing vocabulary")
+            # fetch already existing
+            w2i = self.w2i.copy()
+            c2i = self.c2i.copy()
+            tag2idx = self.tag2idx
+
+            assert w2i["_UNK"] == 0, "No _UNK found!"
         else:
-            w2i["_UNK"] = 0  # unk word / OOV
-        c2i["_UNK"] = 0  # unk char
-        c2i["<w>"] = 1  # word start
-        c2i["</w>"] = 2  # word end index
+            # word 2 indices and tag 2 indices
+            w2i = self.w2i.copy()  # get a copy that refers to a different object
+            c2i = {}  # char to index
+            tag2idx = {}  # tag2idx
+
+            if len(w2i) > 0:
+                assert w2i["_UNK"] == 0
+            else:
+                w2i["_UNK"] = 0  # unk word / OOV
+
+            c2i["_UNK"] = 0  # unk char
+            c2i["<w>"] = 1  # word start
+            c2i["</w>"] = 2  # word end index
 
         num_sentences = 0
         num_tokens = 0
@@ -545,12 +563,8 @@ class SimpleBiltyTagger(object):
             instance_tags_indices = []  # sequence of tag indices
 
             for i, (word, tag) in enumerate(zip(words, tags)):
-
                 # map words and tags to indices
-                if word not in w2i and len(self.w2i) != 0:
-                    # the vocabulary has already been created
-                    instance_word_indices.append(w2i["_UNK"])
-                elif word not in w2i:
+                if word not in w2i:
                     w2i[word] = len(w2i)
                     instance_word_indices.append(w2i[word])
                 else:
@@ -594,6 +608,23 @@ class SimpleBiltyTagger(object):
         """
         train_words, train_tags = self.__get_instances_from_file(train_data)
         return self.get_train_data_from_instances(train_words, train_tags)
+
+    def reload_parameters(self, path_to_model):
+        """
+        before running fit() again, re-initialize model to account for new words/chars
+        """
+        self.wembeds = self.model.add_lookup_parameters(
+            (len(self.w2i), self.in_dim), init=dynet.ConstInitializer(0.01), name="wembeds".encode("utf-8"))
+        model_path = path_to_model + '.model'
+        self.wembeds.populate(model_path, "/wembeds")
+
+        # char embeds
+        self.cembeds = self.model.add_lookup_parameters(
+            (len(self.c2i), self.c_in_dim), init=dynet.ConstInitializer(0.01), name="cembeds".encode("utf-8"))
+        model_path = path_to_model + '.model'
+        self.cembeds.populate(model_path, "/cembeds")
+        print("wembeds/cembeds ({}/{}) re-initialized from {} ".format(len(self.w2i), len(self.c2i), model_path))
+
 
 
 class MyNNTaggerArgumentOptions(object):
