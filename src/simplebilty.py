@@ -348,7 +348,6 @@ class SimpleBiltyTagger(object):
                 layers.append(BiRNNSequencePredictor(f_builder,b_builder))
 
        # store at which layer to predict task
-
         task_num_labels= len(self.tag2idx)
         output_layer = FFSequencePredictor(Layer(self.model, self.h_dim*2, task_num_labels, dynet.softmax))
 
@@ -389,22 +388,22 @@ class SimpleBiltyTagger(object):
                 word_char_indices.append(chars_of_word)
         return word_indices, word_char_indices
 
+    def __get_instances_from_file(self, file_name):
+        """
+        helper function to convert input file to lists of lists holding input words|tags
+        """
+        data = [(words, tags) for (words, tags) in list(read_conll_file(file_name))]
+        words = [words for (words, _) in data]
+        tags = [tags for (_, tags) in data]
+        return words, tags
+
     def get_data_as_indices(self, file_name):
         """
         X = list of (word_indices, word_char_indices)
         Y = list of tag indices
         """
-        X, Y = [],[]
-        org_X, org_Y = [], []
-
-        for (words, tags) in read_conll_file(file_name):
-            word_indices, word_char_indices = self.get_features(words)
-            tag_indices = [self.tag2idx.get(tag) for tag in tags]
-            X.append((word_indices,word_char_indices))
-            Y.append(tag_indices)
-            org_X.append(words)
-            org_Y.append(tags)
-        return X, Y  #, org_X, org_Y - for now don't use
+        words, tags = self.__get_instances_from_file(file_name)
+        return self.get_data_as_indices_from_instances(words, tags)
 
     def get_data_as_indices_from_instances(self, dev_words, dev_tags):
         """
@@ -593,67 +592,8 @@ class SimpleBiltyTagger(object):
         transform training data to features (word indices)
         map tags to integers
         """
-        X = []
-        Y = []
-
-        # word 2 indices and tag 2 indices
-        w2i = {} # word to index
-        c2i = {} # char to index
-        tag2idx = {} # tag2idx
-
-        w2i["_UNK"] = 0  # unk word / OOV
-        c2i["_UNK"] = 0  # unk char
-        c2i["<w>"] = 1   # word start
-        c2i["</w>"] = 2  # word end index
-        
-        
-        num_sentences=0
-        num_tokens=0
-        for instance_idx, (words, tags) in enumerate(read_conll_file(train_data)):
-            instance_word_indices = [] #sequence of word indices
-            instance_char_indices = [] #sequence of char indices
-            instance_tags_indices = [] #sequence of tag indices
-
-            for i, (word, tag) in enumerate(zip(words, tags)):
-
-                # map words and tags to indices
-                if word not in w2i:
-                    w2i[word] = len(w2i)
-                instance_word_indices.append(w2i[word])
-
-                if self.c_in_dim > 0:
-                    chars_of_word = [c2i["<w>"]]
-                    for char in word:
-                        if char not in c2i:
-                            c2i[char] = len(c2i)
-                        chars_of_word.append(c2i[char])
-                    chars_of_word.append(c2i["</w>"])
-                    instance_char_indices.append(chars_of_word)
-
-                if tag not in tag2idx:
-                    tag2idx[tag]=len(tag2idx)
-
-                instance_tags_indices.append(tag2idx.get(tag))
-
-                num_tokens+=1
-
-            num_sentences+=1
-
-            X.append((instance_word_indices, instance_char_indices)) # list of word indices, for every word list of char indices
-            Y.append(instance_tags_indices)
-
-
-        print("%s sentences %s tokens" % (num_sentences, num_tokens), file=sys.stderr)
-        print("%s w features, %s c features " % (len(w2i),len(c2i)), file=sys.stderr)
-        if self.c_in_dim == 0:
-            print("char features disabled", file=sys.stderr)
-
-        assert(len(X)==len(Y))
-
-        # store mappings of words and tags to indices
-        self.set_indices(w2i, c2i, tag2idx)
-
-        return X, Y
+        train_words, train_tags = self.__get_instances_from_file(train_data)
+        return self.get_train_data_from_instances(train_words, train_tags)
 
 
 class MyNNTaggerArgumentOptions(object):
