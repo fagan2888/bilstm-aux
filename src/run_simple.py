@@ -32,8 +32,3 @@ tagger2= load_tagger("tmp")
 correct, total = tagger2.evaluate(test_X, test_Y)
 print(correct, total, correct/total)
 
-train_X_more, train_Y_more = tagger2.get_train_data("data/da-ud-train.conllu")
-tagger2.reload_parameters("tmp")
-tagger2.fit(train_X_more[:10], train_Y_more[:10], 1, trainer, seed=seed)
-correct, total = tagger2.evaluate(test_X, test_Y)
-print(correct, total, correct/total)
