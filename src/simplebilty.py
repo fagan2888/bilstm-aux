@@ -80,9 +80,6 @@ def main():
             dev_X, dev_Y = tagger.get_data_as_indices(args.dev)
 
         if args.model:
-            # load models from existing file
-            tagger.reload_parameters(args.model)
-        else:
             tagger.initialize_graph()
         tagger.fit(train_X, train_Y, args.iters, args.trainer,
                    learning_rate=args.learning_rate, seed=args.dynet_seed, word_dropout_rate=args.word_dropout_rate)
@@ -304,11 +301,11 @@ class SimpleBiltyTagger(object):
             num_words=len(set(embeddings.keys()).union(set(self.w2i.keys()))) # initialize all with embeddings
             # init model parameters and initialize them
             self.wembeds = self.model.add_lookup_parameters(
-                (num_words, self.in_dim),init=dynet.ConstInitializer(0.01), name="wembeds".encode("utf-8"))
+                (num_words, self.in_dim),init=dynet.ConstInitializer(0.01), name="wembeds")
 
             if self.c_in_dim > 0:
                 self.cembeds = self.model.add_lookup_parameters(
-                    (num_chars, self.c_in_dim),init=dynet.ConstInitializer(0.01), name="cembeds".encode("utf-8"))
+                    (num_chars, self.c_in_dim),init=dynet.ConstInitializer(0.01), name="cembeds")
                
             init=0
             l = len(embeddings.keys())
@@ -324,10 +321,10 @@ class SimpleBiltyTagger(object):
 
         else:
             self.wembeds = self.model.add_lookup_parameters(
-                (num_words, self.in_dim),init=dynet.ConstInitializer(0.01), name="wembeds".encode("utf-8"))
+                (num_words, self.in_dim),init=dynet.ConstInitializer(0.01), name="wembeds")
             if self.c_in_dim > 0:
                 self.cembeds = self.model.add_lookup_parameters(
-                    (num_chars, self.c_in_dim),init=dynet.ConstInitializer(0.01), name="cembeds".encode("utf-8"))
+                    (num_chars, self.c_in_dim),init=dynet.ConstInitializer(0.01), name="cembeds")
 
         # make it more flexible to add number of layers as specified by parameter
         layers = [] # inner layers
@@ -608,23 +605,6 @@ class SimpleBiltyTagger(object):
         """
         train_words, train_tags = self.__get_instances_from_file(train_data)
         return self.get_train_data_from_instances(train_words, train_tags)
-
-    def reload_parameters(self, path_to_model):
-        """
-        before running fit() again, re-initialize model to account for new words/chars
-        """
-        self.wembeds = self.model.add_lookup_parameters(
-            (len(self.w2i), self.in_dim), init=dynet.ConstInitializer(0.01), name="wembeds".encode("utf-8"))
-        model_path = path_to_model + '.model'
-        self.wembeds.populate(model_path, "/wembeds")
-
-        # char embeds
-        self.cembeds = self.model.add_lookup_parameters(
-            (len(self.c2i), self.c_in_dim), init=dynet.ConstInitializer(0.01), name="cembeds".encode("utf-8"))
-        model_path = path_to_model + '.model'
-        self.cembeds.populate(model_path, "/cembeds")
-        print("wembeds/cembeds ({}/{}) re-initialized from {} ".format(len(self.w2i), len(self.c2i), model_path))
-
 
 
 class MyNNTaggerArgumentOptions(object):
