@@ -175,13 +175,15 @@ class SimpleBiltyTagger(object):
     def fit(self, train_X, train_Y, num_epochs, train_algo, val_X=None,
             val_Y=None, patience=2, model_path=None, seed=None,
             word_dropout_rate=0.25, learning_rate=0, trg_vectors=None,
-            unsup_weight=1.0):
+            unsup_ood_weight=1.0, unsup_id_weight=1.0):
         """
         train the tagger
         :param trg_vectors: the prediction targets used for the unsupervised loss
                             in temporal ensembling
-        :param unsup_weight: weight for the unsupervised consistency loss
-                                    used in temporal ensembling
+        :param unsup_ood_weight: weight for the unsupervised consistency loss
+                             used in temporal ensembling for unlabeled OOD samples
+        :param unsup_id_weight: weight for the unsupervised consistency loss used
+                                  in temporal ensembling for labeled ID samples
         """
         print("read training data",file=sys.stderr)
 
@@ -241,9 +243,11 @@ class SimpleBiltyTagger(object):
                     # in temporal ensembling, we assign a dummy label of [0] for
                     # unlabeled sequences; we skip the supervised loss for these
                     loss = dynet.scalarInput(0)
+                    unsup_weight = unsup_ood_weight
                 else:
                     loss = dynet.esum([self.pick_neg_log(pred,gold) for
                                           pred, gold in zip(output, y)])
+                    unsup_weight = unsup_id_weight
 
                 if trg_vectors is not None:
                     # the consistency loss in temporal ensembling is used for
@@ -253,6 +257,8 @@ class SimpleBiltyTagger(object):
                     other_loss = unsup_weight * dynet.average(
                         [dynet.squared_distance(o, dynet.inputVector(t))
                          for o, t in zip(output, targets)])
+
+
                     loss += other_loss
 
                 total_loss += loss.value()
