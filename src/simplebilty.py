@@ -175,14 +175,14 @@ class SimpleBiltyTagger(object):
     def fit(self, train_X, train_Y, num_epochs, train_algo, val_X=None,
             val_Y=None, patience=2, model_path=None, seed=None,
             word_dropout_rate=0.25, learning_rate=0, trg_vectors=None,
-            unsup_weight=1.0, clip_threshold=0):
+            unsup_weight=1.0, clip_threshold=5.0):
         """
         train the tagger
         :param trg_vectors: the prediction targets used for the unsupervised loss
                             in temporal ensembling
         :param unsup_weight: weight for the unsupervised consistency loss
                                     used in temporal ensembling
-        :param clip_threshold: use gradient clipping with threshold (if >0)
+        :param clip_threshold: use gradient clipping with threshold (on if >0; default: 5.0)
         """
         print("read training data",file=sys.stderr)
 
