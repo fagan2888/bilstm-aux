@@ -198,7 +198,6 @@ class SimpleBiltyTagger(object):
             trainer = training_algo(self.model)
 
         if clip_threshold > 0:
-            print("use clip_threshold", clip_threshold)
             trainer.set_clip_threshold(clip_threshold)
 
         # if we use word dropout keep track of counts
