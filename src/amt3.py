@@ -1,16 +1,12 @@
 #!/usr/bin/env python3
 # coding=utf-8
 """
-A neural network based tagger (bi-LSTM) - version w/o MTL, and more easily callable from code (see run_simple.py)
+Amt3
+
 :author: Barbara Plank
 
-Diffs to bilty:
-* no support for MTL
-* fewer options than 'bilty'
 """
-import argparse
 import random
-import time
 import sys
 import numpy as np
 import os
@@ -25,91 +21,12 @@ from lib.mio import read_conll_file, load_embeddings_file
 from lib.mmappers import TRAINER_MAP
 
 
-def main():
-    parser = argparse.ArgumentParser(description="""Run the NN tagger""")
-    parser.add_argument("--train", help="training data in CoNLL tabular format")
-    parser.add_argument("--model", help="load model from file", required=False)
-    parser.add_argument("--iters", help="training iterations [default: 30]", required=False,type=int,default=30)
-    parser.add_argument("--in_dim", help="input dimension [default: 64] (like Polyglot embeds)", required=False,type=int,default=64)
-    parser.add_argument("--c_in_dim", help="input dimension for character embeddings; if set to 0 disable lower-level char lstm [default: 100]", required=False,type=int,default=100)
-    parser.add_argument("--h_dim", help="hidden dimension [default: 100]", required=False,type=int,default=100)
-    parser.add_argument("--h_layers", help="number of stacked LSTMs [default: 1 = no stacking]", required=False,type=int,default=1)
-    parser.add_argument("--test", help="test file", required=False)
-    parser.add_argument("--dev", help="dev file", required=False)
-    parser.add_argument("--save", help="save model to file (appends .model as well as .pickle)", required=False,default=None)
-    parser.add_argument("--embeds", help="word embeddings file", required=False, default=None)
-    parser.add_argument("--sigma", help="noise sigma", required=False, default=0.2, type=float)
-    parser.add_argument("--ac", help="activation function [rectify, tanh, ...]", default="tanh", type=MyNNTaggerArgumentOptions.acfunct)
-    parser.add_argument("--trainer", help="trainer [sgd, adam] default: adam", required=False, default="adam")
-    parser.add_argument("--learning-rate", help="learning rate [0: use default]", default=0, type=float) # see: http://dynet.readthedocs.io/en/latest/optimizers.html
-    parser.add_argument("--dynet-seed", help="random seed for dynet (needs to be first argument!)", required=False, type=int)
-    parser.add_argument("--dynet-mem", help="memory for dynet (needs to be first argument!)", required=False, type=int)
-    parser.add_argument("--dynet-autobatch", help="activate autobatching if set to 1", required=False, type=int, default=0)
-    parser.add_argument("--word-dropout-rate", help="word dropout rate [default: 0.25], if 0=disabled, recommended: 0.25 (Kipperwasser & Goldberg, 2016)", required=False, default=0.25, type=float)
-    parser.add_argument("--save-embeds", help="save word embeddings file", required=False, default=None)
-
-    args = parser.parse_args()
-
-    if args.save:
-        # check if folder exists
-        if os.path.isdir(args.save):
-            modeldir = os.path.dirname(args.save)
-            if not os.path.exists(modeldir):
-                os.makedirs(modeldir)
-
-    start = time.time()
-
-    print(">> Running simplebilty <<", file=sys.stderr)
-    if args.model:
-        print("loading model from file {}".format(args.model), file=sys.stderr)
-        tagger = load_tagger(args.model)
-    else:
-        tagger = SimpleBiltyTagger(args.in_dim,
-                              args.h_dim,
-                              args.c_in_dim,
-                              args.h_layers,
-                              embeds_file=args.embeds,
-                              activation=args.ac,
-                              noise_sigma=args.sigma)
-
-    if args.train:
-        ## read data
-        train_X, train_Y = tagger.get_train_data(args.train)
-
-        if args.dev:
-            dev_X, dev_Y = tagger.get_data_as_indices(args.dev)
-
-        if args.model:
-            tagger.initialize_graph()
-        tagger.fit(train_X, train_Y, args.iters, args.trainer,
-                   learning_rate=args.learning_rate, seed=args.dynet_seed, word_dropout_rate=args.word_dropout_rate)
-        if args.save:
-            save_tagger(tagger, args.save)
-
-    if args.test:
-        stdout = sys.stdout
-
-        sys.stderr.write('\nTesting\n')
-        sys.stderr.write('*******\n')
-        test_X, test_Y = tagger.get_data_as_indices(args.test)
-        correct, total = tagger.evaluate(test_X, test_Y)
-
-        print("\ntest accuracy: %.4f" % (correct/total), file=sys.stderr)
-        print(("Done. Took {0:.2f} seconds.".format(time.time()-start)),file=sys.stderr)
-        sys.stdout = stdout
-
-    print("Info: biLSTM\n\t" + "\n\t".join(["{}: {}".format(a, str(v)) for a, v in vars(args).items()
-                                            if a not in ["train", "test", "dev", "pred_layer"]]), file=sys.stderr)
-
-    if args.save_embeds:
-        tagger.save_embeds(args.save_embeds)
-
 def load_tagger(path_to_model):
     """
     load a model from file; specify the .model file, it assumes the *pickle file in the same location
     """
     myparams = pickle.load(open(path_to_model + ".params.pickle", "rb"))
-    tagger = SimpleBiltyTagger(myparams["in_dim"],
+    tagger = Amt3Tagger(myparams["in_dim"],
                       myparams["h_dim"],
                       myparams["c_in_dim"],
                       myparams["h_layers"],
@@ -139,7 +56,7 @@ def save_tagger(nntagger, path_to_model):
     print("model stored: {}".format(modelname), file=sys.stderr)
 
 
-class SimpleBiltyTagger(object):
+class Amt3Tagger(object):
 
     def __init__(self,in_dim,h_dim,c_in_dim,h_layers,embeds_file=None,
                  activation=dynet.tanh, noise_sigma=0.1,
@@ -172,25 +89,25 @@ class SimpleBiltyTagger(object):
         self.w2i = w2i
         self.c2i = c2i
 
-    def fit(self, train_X, train_Y, num_epochs, train_algo, val_X=None,
-            val_Y=None, patience=2, model_path=None, seed=None,
+    def fit(self, train1_X, train1_Y, num_epochs, train_algo,
+            train2_X=None, train2_Y=None,  # second task
+            train3_X=None, train3_Y=None,  # third task
+            val_X=None, val_Y=None, patience=2, model_path=None, seed=None,
             word_dropout_rate=0.25, learning_rate=0, trg_vectors=None,
-            unsup_ood_weight=1.0, unsup_id_weight=1.0, clip_treshold=5.0):
+            unsup_weight=1.0, clip_threshold=5.0):
         """
         train the tagger
         :param trg_vectors: the prediction targets used for the unsupervised loss
                             in temporal ensembling
-        :param unsup_ood_weight: weight for the unsupervised consistency loss
-                             used in temporal ensembling for unlabeled OOD samples
-        :param unsup_id_weight: weight for the unsupervised consistency loss used
-                                  in temporal ensembling for labeled ID samples
+        :param unsup_weight: weight for the unsupervised consistency loss
+                                    used in temporal ensembling
         :param clip_threshold: use gradient clipping with threshold (on if >0; default: 5.0)
+        :param train2_X: F1 input
+        :param train3_X: Ft input
+
+        Three tasks are indexed as "F0", "F1" and "Ft"
         """
         print("read training data",file=sys.stderr)
-
-        if seed:
-            print(">>> using seed: ", seed, file=sys.stderr)
-            random.seed(seed) #setting random seed
 
         training_algo = TRAINER_MAP[train_algo]
 
@@ -205,11 +122,28 @@ class SimpleBiltyTagger(object):
         # if we use word dropout keep track of counts
         if word_dropout_rate > 0.0:
             widCount = Counter()
-            for sentence, _ in train_X:
+            for sentence, _ in train1_X:
                 widCount.update([w for w in sentence])
+            if train3_X:
+                for sentence, _ in train2_X:
+                    widCount.update([w for w in sentence])
 
-        assert(len(train_X)==len(train_Y))
-        train_data = list(zip(train_X,train_Y))
+        assert(len(train1_X)==len(train1_Y))
+
+        train_data = list(zip(train1_X,train1_Y, [["F0"]*len(train1_Y)][0])) # store X, Y and task_id, get out flat list
+
+        if train2_X:
+            # update word count for dropout, add data
+            for sentence, _ in train2_X:
+                widCount.update([w for w in sentence])
+            assert (len(train2_X) == len(train2_Y))
+            train_data += list(zip(train2_X, train2_Y, [["F1"]*len(train2_Y)][0]))
+        if train3_X:
+            for sentence, _ in train3_X:
+                widCount.update([w for w in sentence])
+            assert (len(train3_X) == len(train3_Y))
+            train_data += list(zip(train3_X, train3_Y, [["Ft"]*len(train3_Y)][0]))
+
 
         # if we use target vectors, keep track of the targets per sentence
         if trg_vectors is not None:
@@ -235,23 +169,21 @@ class SimpleBiltyTagger(object):
             random.shuffle(random_indices)
 
             for i, idx in enumerate(random_indices):
-                (word_indices, char_indices), y = train_data[idx]
+                (word_indices, char_indices), y, task_id = train_data[idx]
 
                 if word_dropout_rate > 0.0:
                     word_indices = [self.w2i["_UNK"] if
                                         (random.random() > (widCount.get(w)/(word_dropout_rate+widCount.get(w))))
                                         else w for w in word_indices]
-                output = self.predict(word_indices, char_indices, train=True)
+                output = self.predict(word_indices, char_indices, task_id, train=True)
 
                 if len(y) == 1 and y[0] == 0:
                     # in temporal ensembling, we assign a dummy label of [0] for
                     # unlabeled sequences; we skip the supervised loss for these
                     loss = dynet.scalarInput(0)
-                    unsup_weight = unsup_ood_weight
                 else:
                     loss = dynet.esum([self.pick_neg_log(pred,gold) for
                                           pred, gold in zip(output, y)])
-                    unsup_weight = unsup_id_weight
 
                 if trg_vectors is not None:
                     # the consistency loss in temporal ensembling is used for
@@ -261,8 +193,6 @@ class SimpleBiltyTagger(object):
                     other_loss = unsup_weight * dynet.average(
                         [dynet.squared_distance(o, dynet.inputVector(t))
                          for o, t in zip(output, targets)])
-
-
                     loss += other_loss
 
                 total_loss += loss.value()
@@ -294,6 +224,10 @@ class SimpleBiltyTagger(object):
     def initialize_graph(self, num_words=None, num_chars=None):
         """
         build graph and link to parameters
+
+        F2=True: activate second auxiliary output
+        Ft=True: activate third auxiliary output
+
         """
         num_words = num_words if num_words is not None else len(self.w2i)
         num_chars = num_chars if num_chars is not None else len(self.c2i)
@@ -357,7 +291,15 @@ class SimpleBiltyTagger(object):
 
         # store at which layer to predict task
         task_num_labels= len(self.tag2idx)
-        output_layer = FFSequencePredictor(Layer(self.model, self.h_dim*2, task_num_labels, dynet.softmax))
+        output_layers_dict = {}
+        output_layers_dict["F0"] = FFSequencePredictor(Layer(self.model, self.h_dim*2, task_num_labels, dynet.softmax))
+
+        # for simplicity always add additional outputs, even if they are then not used
+        output_layers_dict["F1"] = FFSequencePredictor(
+                Layer(self.model, self.h_dim * 2, task_num_labels, dynet.softmax))
+
+        output_layers_dict["Ft"] = FFSequencePredictor(
+                Layer(self.model, self.h_dim * 2, task_num_labels, dynet.softmax))
 
         if self.c_in_dim > 0:
             self.char_rnn = BiRNNSequencePredictor(
@@ -370,7 +312,7 @@ class SimpleBiltyTagger(object):
 
         self.predictors = dict()
         self.predictors["inner"] = layers
-        self.predictors["output_layers_dict"] = output_layer
+        self.predictors["output_layers_dict"] = output_layers_dict
         self.predictors["task_expected_at"] = self.h_layers
 
     def get_features(self, words):
@@ -434,7 +376,7 @@ class SimpleBiltyTagger(object):
             org_Y.append(tags)
         return X, Y  # , org_X, org_Y - for now don't use
 
-    def predict(self, word_indices, char_indices, train=False,
+    def predict(self, word_indices, char_indices, task_id, train=False,
                 soft_labels=False, temperature=None):
         """
         predict tags for a sentence represented as char+word embeddings
@@ -480,7 +422,7 @@ class SimpleBiltyTagger(object):
                 backward_sequence = [self.activation(s) for s in backward_sequence]
 
             if i == output_expected_at_layer:
-                output_predictor = self.predictors["output_layers_dict"]
+                output_predictor = self.predictors["output_layers_dict"][task_id]
                 concat_layer = [dynet.concatenate([f, b]) for f, b in zip(forward_sequence,reversed(backward_sequence))]
                 if train and self.noise_sigma > 0.0:
                     concat_layer = [dynet.noise(fe,self.noise_sigma) for fe in concat_layer]
@@ -495,16 +437,16 @@ class SimpleBiltyTagger(object):
         raise Exception("oops should not be here")
         return None
 
-    def evaluate(self, test_X, test_Y):
+    def evaluate(self, test_X, test_Y, task_id="F0"):
         """
-        compute accuracy on a test file
+        compute accuracy on a test file; by default use "F0" as predictor
         """
         correct = 0
         total = 0.0
 
         for i, ((word_indices, word_char_indices), gold_tag_indices) in enumerate(zip(test_X, test_Y)):
 
-            output = self.predict(word_indices, word_char_indices)
+            output = self.predict(word_indices, word_char_indices, task_id)
             predicted_tag_indices = [np.argmax(o.value()) for o in output]
 
             correct += sum([1 for (predicted, gold) in zip(predicted_tag_indices, gold_tag_indices) if predicted == gold])
@@ -512,13 +454,13 @@ class SimpleBiltyTagger(object):
 
         return correct, total
 
-    def get_predictions(self, test_X, soft_labels=False):
+    def get_predictions(self, test_X, soft_labels=False, task_id="F0"):
         """
         get flat list of predictions
         """
         predictions = []
         for word_indices, word_char_indices in test_X:
-            output = self.predict(word_indices, word_char_indices)
+            output = self.predict(word_indices, word_char_indices, task_id)
             predictions += [o.value() if soft_labels else
                             int(np.argmax(o.value())) for o in output]
         return predictions
@@ -616,23 +558,36 @@ class SimpleBiltyTagger(object):
         train_words, train_tags = self.__get_instances_from_file(train_data)
         return self.get_train_data_from_instances(train_words, train_tags)
 
-
-class MyNNTaggerArgumentOptions(object):
-    def __init__(self):
-        pass
-
-    ### functions for checking arguments
-    def acfunct(arg):
-        """ check for allowed argument for --ac option """
-        try:
-            functions = [dynet.rectify, dynet.tanh]
-            functions = { function.__name__ : function for function in functions}
-            functions["None"] = None
-            return functions[str(arg)]
-        except:
-            raise argparse.ArgumentTypeError("String {} does not match required format".format(arg,))
-
-
-
 if __name__=="__main__":
-    main()
+
+    ## test
+    seed = 123
+    train_data = "data/da-ud-dev.conllu"
+    train_data2 = "data/head"  # add some first instances from train
+    dev_data = "data/da-ud-test.conllu"
+    in_dim = 64
+    h_dim = 100
+    c_in_dim = 100
+    h_layers = 1
+    iters = 2
+    trainer = "sgd"
+    tagger = Amt3Tagger(in_dim, h_dim, c_in_dim, h_layers, embeds_file=None)
+    train1_X, train1_Y = tagger.get_train_data(train_data)
+    train2_X, train2_Y = tagger.get_train_data(train_data2)
+    train3_X, train3_Y = tagger.get_train_data("data/tail")
+
+    tagger.initialize_graph()
+    tagger.fit(train1_X, train1_Y, iters, trainer, seed=seed, clip_threshold=5.0)
+               #train2_X=train2_X, train2_Y=train2_Y,
+               #train3_X=train3_X, train3_Y=train3_Y)
+    test_X, test_Y = tagger.get_data_as_indices(dev_data)
+    correct, total = tagger.evaluate(test_X, test_Y)
+    print(correct, total, correct / total)
+
+    # test loading/saving
+    save_tagger(tagger, "tmp")
+
+    tagger2 = load_tagger("tmp")
+    correct, total = tagger2.evaluate(test_X, test_Y)
+    print(correct, total, correct / total)
+
