@@ -30,8 +30,7 @@ def load_tagger(path_to_model):
                       myparams["h_dim"],
                       myparams["c_in_dim"],
                       myparams["h_layers"],
-                      activation=myparams["activation"],
-                      orthogonality_weight=myparams["orthogonality_weight"])
+                      activation=myparams["activation"])
     tagger.set_indices(myparams["w2i"],myparams["c2i"],myparams["tag2idx"])
     tagger.initialize_graph()
     tagger.model.populate(path_to_model + '.model')
@@ -51,8 +50,7 @@ def save_tagger(nntagger, path_to_model):
                 "in_dim": nntagger.in_dim,
                 "h_dim": nntagger.h_dim,
                 "c_in_dim": nntagger.c_in_dim,
-                "h_layers": nntagger.h_layers,
-                "orthogonality_weight": nntagger.orthogonality_weight
+                "h_layers": nntagger.h_layers
                 }
     pickle.dump(myparams, open(path_to_model + ".params.pickle", "wb" ) )
     print("model stored: {}".format(modelname), file=sys.stderr)
@@ -79,7 +77,6 @@ class Amt3Tagger(object):
         self.embeds_file = embeds_file
         self.char_rnn = None # RNN for character input
         self.task_ids = ["F0", "F1", "Ft"]
-        self.orthogonality_weight = orthogonality_weight
 
     def pick_neg_log(self, pred, gold):
         if not isinstance(gold, int):
@@ -98,7 +95,8 @@ class Amt3Tagger(object):
             train3_X=None, train3_Y=None,  # third task
             val_X=None, val_Y=None, patience=2, model_path=None, seed=None,
             word_dropout_rate=0.25, learning_rate=0, trg_vectors=None,
-            unsup_weight=1.0, clip_threshold=5.0):
+            unsup_weight=1.0, clip_threshold=5.0,
+            orthogonality_weight=0.0):
         """
         train the tagger
         :param trg_vectors: the prediction targets used for the unsupervised loss
@@ -178,7 +176,9 @@ class Amt3Tagger(object):
                     word_indices = [self.w2i["_UNK"] if
                                         (random.random() > (widCount.get(w)/(word_dropout_rate+widCount.get(w))))
                                         else w for w in word_indices]
-                output, constraint = self.predict(word_indices, char_indices, task_id, train=True)
+                output, constraint = self.predict(
+                    word_indices, char_indices, task_id, train=True,
+                    orthogonality_weight=orthogonality_weight)
 
                 if len(y) == 1 and y[0] == 0:
                     # in temporal ensembling, we assign a dummy label of [0] for
@@ -199,7 +199,7 @@ class Amt3Tagger(object):
                     loss += other_loss
 
                 # add the orthogonality constraint to the loss
-                loss += constraint * self.orthogonality_weight
+                loss += constraint * orthogonality_weight
                 total_loss += loss.value()
                 total_constraint += constraint.value()
                 total_tagged += len(word_indices)
@@ -385,7 +385,7 @@ class Amt3Tagger(object):
         return X, Y  # , org_X, org_Y - for now don't use
 
     def predict(self, word_indices, char_indices, task_id, train=False,
-                soft_labels=False, temperature=None):
+                soft_labels=False, temperature=None, orthogonality_weight=0.0):
         """
         predict tags for a sentence represented as char+word embeddings
         """
@@ -439,7 +439,7 @@ class Amt3Tagger(object):
                     concat_layer, soft_labels=soft_labels,
                     temperature=temperature)
 
-                if self.orthogonality_weight != 0:
+                if orthogonality_weight != 0:
                     # use the orthogonality constraint
                     # get the weight matrix of the current output layer
                     task_W = dynet.parameter(self.predictors["output_layers_dict"][task_id].network_builder.W)
