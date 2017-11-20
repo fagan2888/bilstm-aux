@@ -30,7 +30,8 @@ def load_tagger(path_to_model):
                       myparams["h_dim"],
                       myparams["c_in_dim"],
                       myparams["h_layers"],
-                      activation=myparams["activation"])
+                      activation=myparams["activation"],
+                      orthogonality_weight=myparams["orthogonality_weight"])
     tagger.set_indices(myparams["w2i"],myparams["c2i"],myparams["tag2idx"])
     tagger.initialize_graph()
     tagger.model.populate(path_to_model + '.model')
@@ -50,7 +51,8 @@ def save_tagger(nntagger, path_to_model):
                 "in_dim": nntagger.in_dim,
                 "h_dim": nntagger.h_dim,
                 "c_in_dim": nntagger.c_in_dim,
-                "h_layers": nntagger.h_layers
+                "h_layers": nntagger.h_layers,
+                "orthogonality_weight": nntagger.orthogonality_weight
                 }
     pickle.dump(myparams, open(path_to_model + ".params.pickle", "wb" ) )
     print("model stored: {}".format(modelname), file=sys.stderr)
@@ -60,7 +62,7 @@ class Amt3Tagger(object):
 
     def __init__(self,in_dim,h_dim,c_in_dim,h_layers,embeds_file=None,
                  activation=dynet.tanh, noise_sigma=0.1,
-                 word2id=None):
+                 word2id=None, orthogonality_weight=0):
         self.w2i = {} if word2id is None else word2id  # word to index mapping
         self.c2i = {}  # char to index mapping
         self.tag2idx = {} # tag to tag_id mapping
@@ -76,6 +78,8 @@ class Amt3Tagger(object):
         self.cembeds = None # lookup: embeddings for characters
         self.embeds_file = embeds_file
         self.char_rnn = None # RNN for character input
+        self.task_ids = ["F0", "F1", "Ft"]
+        self.orthogonality_weight = orthogonality_weight
 
     def pick_neg_log(self, pred, gold):
         if not isinstance(gold, int):
@@ -162,8 +166,7 @@ class Amt3Tagger(object):
         for cur_iter in range(num_epochs):
             bar = Bar('Training epoch %d/%d...' % (cur_iter + 1, num_epochs),
                       max=len(train_data), flush=True)
-            total_loss=0.0
-            total_tagged=0.0
+            total_loss, total_tagged, total_constraint = 0.0, 0.0, 0.0
 
             random_indices = np.arange(len(train_data))
             random.shuffle(random_indices)
@@ -175,7 +178,7 @@ class Amt3Tagger(object):
                     word_indices = [self.w2i["_UNK"] if
                                         (random.random() > (widCount.get(w)/(word_dropout_rate+widCount.get(w))))
                                         else w for w in word_indices]
-                output = self.predict(word_indices, char_indices, task_id, train=True)
+                output, constraint = self.predict(word_indices, char_indices, task_id, train=True)
 
                 if len(y) == 1 and y[0] == 0:
                     # in temporal ensembling, we assign a dummy label of [0] for
@@ -195,14 +198,19 @@ class Amt3Tagger(object):
                          for o, t in zip(output, targets)])
                     loss += other_loss
 
+                # add the orthogonality constraint to the loss
+                loss += constraint * self.orthogonality_weight
                 total_loss += loss.value()
+                total_constraint += constraint.value()
                 total_tagged += len(word_indices)
                 
                 loss.backward()
                 trainer.update()
                 bar.next()
 
-            print("iter {2} {0:>12}: {1:.2f}".format("total loss",total_loss/total_tagged,cur_iter), file=sys.stderr)
+            print("iter %d. Total loss: %.3f, total penalty: %.3f" % (
+                cur_iter, total_loss/total_tagged, total_constraint/total_tagged
+            ), file=sys.stderr)
 
             if val_X is not None and val_Y is not None and model_path is not None:
                 # get the best accuracy on the validation set
@@ -245,11 +253,11 @@ class Amt3Tagger(object):
             num_words=len(set(embeddings.keys()).union(set(self.w2i.keys()))) # initialize all with embeddings
             # init model parameters and initialize them
             self.wembeds = self.model.add_lookup_parameters(
-                (num_words, self.in_dim),init=dynet.ConstInitializer(0.01), name="wembeds")
+                (num_words, self.in_dim),init=dynet.ConstInitializer(0.01))
 
             if self.c_in_dim > 0:
                 self.cembeds = self.model.add_lookup_parameters(
-                    (num_chars, self.c_in_dim),init=dynet.ConstInitializer(0.01), name="cembeds")
+                    (num_chars, self.c_in_dim),init=dynet.ConstInitializer(0.01))
                
             init=0
             l = len(embeddings.keys())
@@ -265,10 +273,10 @@ class Amt3Tagger(object):
 
         else:
             self.wembeds = self.model.add_lookup_parameters(
-                (num_words, self.in_dim),init=dynet.ConstInitializer(0.01), name="wembeds")
+                (num_words, self.in_dim),init=dynet.ConstInitializer(0.01))
             if self.c_in_dim > 0:
                 self.cembeds = self.model.add_lookup_parameters(
-                    (num_chars, self.c_in_dim),init=dynet.ConstInitializer(0.01), name="cembeds")
+                    (num_chars, self.c_in_dim),init=dynet.ConstInitializer(0.01))
 
         # make it more flexible to add number of layers as specified by parameter
         layers = [] # inner layers
@@ -413,6 +421,7 @@ class Amt3Tagger(object):
         prev = features
         prev_rev = features
         num_layers = self.h_layers
+        constraint = 0
         for i in range(0,num_layers):
             predictor = self.predictors["inner"][i]
             forward_sequence, backward_sequence = predictor.predict_sequence(prev, prev_rev)
@@ -429,7 +438,29 @@ class Amt3Tagger(object):
                 output = output_predictor.predict_sequence(
                     concat_layer, soft_labels=soft_labels,
                     temperature=temperature)
-                return output
+
+                if self.orthogonality_weight != 0:
+                    # use the orthogonality constraint
+                    # get the weight matrix of the current output layer
+                    task_W = dynet.parameter(self.predictors["output_layers_dict"][task_id].network_builder.W)
+                    other_tasks_Ws = [dynet.parameter(
+                        self.predictors["output_layers_dict"][id_].network_builder.W)
+                        for id_ in self.task_ids if id_ != task_id]
+
+                    # calculate the matrix product of the task matrix with both others
+                    matrix_product_1 = dynet.transpose(task_W) * other_tasks_Ws[0]
+                    matrix_product_2 = dynet.transpose(task_W) * other_tasks_Ws[1]
+
+                    # take the squared Frobenius norm by squaring
+                    # every element and then summing them
+                    squared_frobenius_norm1 = dynet.sum_elems(
+                        dynet.square(matrix_product_1))
+                    squared_frobenius_norm2 = dynet.sum_elems(
+                        dynet.square(matrix_product_2))
+                    constraint += squared_frobenius_norm1 + squared_frobenius_norm2
+                    # print('Constraint with first matrix:', squared_frobenius_norm1.value())
+                    # print('Constraint with second matrix:', squared_frobenius_norm2.value())
+                return output, constraint
 
             prev = forward_sequence
             prev_rev = backward_sequence
@@ -446,7 +477,7 @@ class Amt3Tagger(object):
 
         for i, ((word_indices, word_char_indices), gold_tag_indices) in enumerate(zip(test_X, test_Y)):
 
-            output = self.predict(word_indices, word_char_indices, task_id)
+            output, _ = self.predict(word_indices, word_char_indices, task_id)
             predicted_tag_indices = [np.argmax(o.value()) for o in output]
 
             correct += sum([1 for (predicted, gold) in zip(predicted_tag_indices, gold_tag_indices) if predicted == gold])
@@ -460,7 +491,7 @@ class Amt3Tagger(object):
         """
         predictions = []
         for word_indices, word_char_indices in test_X:
-            output = self.predict(word_indices, word_char_indices, task_id)
+            output, _ = self.predict(word_indices, word_char_indices, task_id)
             predictions += [o.value() if soft_labels else
                             int(np.argmax(o.value())) for o in output]
         return predictions
@@ -590,4 +621,3 @@ if __name__=="__main__":
     tagger2 = load_tagger("tmp")
     correct, total = tagger2.evaluate(test_X, test_Y)
     print(correct, total, correct / total)
-
