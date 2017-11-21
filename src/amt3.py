@@ -155,14 +155,18 @@ class Amt3Tagger(object):
                 sentence_trg_vectors.append(trg_vectors[trg_start_id:trg_start_id+len(example[0]), :])
                 trg_start_id += len(example[0])
             assert trg_start_id == len(trg_vectors),\
-                'Error: Idx %d is not at %d.' % (trg_start_id, len(trg_vectors))
+                'Error: Idx {} is not at {}.'.format(trg_start_id, len(trg_vectors))
 
-        print('Starting training for %d epochs...' % num_epochs)
+        print('Starting training for {} epochs...'.format(num_epochs))
         best_val_acc, epochs_no_improvement = 0., 0
         if val_X is not None and val_Y is not None and model_path is not None:
-            print('Using early stopping with patience of %d...' % patience)
+            print('Using early stopping with patience of {}...'.format(patience))
+
+        if seed:
+            random.seed(seed)
+
         for cur_iter in range(num_epochs):
-            bar = Bar('Training epoch %d/%d...' % (cur_iter + 1, num_epochs),
+            bar = Bar('Training epoch {}/{}...'.format(cur_iter + 1, num_epochs),
                       max=len(train_data), flush=True)
             total_loss, total_tagged, total_constraint = 0.0, 0.0, 0.0
 
@@ -176,6 +180,7 @@ class Amt3Tagger(object):
                     word_indices = [self.w2i["_UNK"] if
                                         (random.random() > (widCount.get(w)/(word_dropout_rate+widCount.get(w))))
                                         else w for w in word_indices]
+
                 output, constraint = self.predict(
                     word_indices, char_indices, task_id, train=True,
                     orthogonality_weight=orthogonality_weight)
@@ -198,17 +203,20 @@ class Amt3Tagger(object):
                          for o, t in zip(output, targets)])
                     loss += other_loss
 
-                # add the orthogonality constraint to the loss
-                loss += constraint * orthogonality_weight
-                total_loss += loss.value()
-                total_constraint += constraint.value()
+                if orthogonality_weight != 0.0:
+                    # add the orthogonality constraint to the loss
+                    loss += constraint * orthogonality_weight
+                    total_constraint += constraint.value()
+                    
+                total_loss += loss.value() # for output
+
                 total_tagged += len(word_indices)
                 
                 loss.backward()
                 trainer.update()
                 bar.next()
 
-            print("iter %d. Total loss: %.3f, total penalty: %.3f" % (
+            print("iter {}. Total loss: {:.3f}, total penalty: {:.3f}".format(
                 cur_iter, total_loss/total_tagged, total_constraint/total_tagged
             ), file=sys.stderr)
 
@@ -218,15 +226,15 @@ class Amt3Tagger(object):
                 val_accuracy = val_correct / val_total
 
                 if val_accuracy > best_val_acc:
-                    print('Accuracy %.4f is better than best val accuracy %.4f.' % (val_accuracy, best_val_acc))
+                    print('Accuracy {:.4f} is better than best val accuracy {:.4f}.'.format(val_accuracy, best_val_acc))
                     best_val_acc = val_accuracy
                     epochs_no_improvement = 0
                     save_tagger(self, model_path)
                 else:
-                    print('Accuracy %.4f is worse than best val loss %.4f.' % (val_accuracy, best_val_acc))
+                    print('Accuracy {:.4f} is worse than best val loss {:.4f}.'.format(val_accuracy, best_val_acc))
                     epochs_no_improvement += 1
                 if epochs_no_improvement == patience:
-                    print('No improvement for %d epochs. Early stopping...' % epochs_no_improvement)
+                    print('No improvement for {} epochs. Early stopping...'.format(epochs_no_improvement))
                     break
 
     def initialize_graph(self, num_words=None, num_chars=None):
@@ -589,35 +597,3 @@ class Amt3Tagger(object):
         train_words, train_tags = self.__get_instances_from_file(train_data)
         return self.get_train_data_from_instances(train_words, train_tags)
 
-if __name__=="__main__":
-
-    ## test
-    seed = 123
-    train_data = "data/da-ud-dev.conllu"
-    train_data2 = "data/head"  # add some first instances from train
-    dev_data = "data/da-ud-test.conllu"
-    in_dim = 64
-    h_dim = 100
-    c_in_dim = 100
-    h_layers = 1
-    iters = 2
-    trainer = "sgd"
-    tagger = Amt3Tagger(in_dim, h_dim, c_in_dim, h_layers, embeds_file=None)
-    train1_X, train1_Y = tagger.get_train_data(train_data)
-    train2_X, train2_Y = tagger.get_train_data(train_data2)
-    train3_X, train3_Y = tagger.get_train_data("data/tail")
-
-    tagger.initialize_graph()
-    tagger.fit(train1_X, train1_Y, iters, trainer, seed=seed, clip_threshold=5.0)
-               #train2_X=train2_X, train2_Y=train2_Y,
-               #train3_X=train3_X, train3_Y=train3_Y)
-    test_X, test_Y = tagger.get_data_as_indices(dev_data)
-    correct, total = tagger.evaluate(test_X, test_Y)
-    print(correct, total, correct / total)
-
-    # test loading/saving
-    save_tagger(tagger, "tmp")
-
-    tagger2 = load_tagger("tmp")
-    correct, total = tagger2.evaluate(test_X, test_Y)
-    print(correct, total, correct / total)
