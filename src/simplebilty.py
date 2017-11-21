@@ -72,6 +72,7 @@ def main():
                               activation=args.ac,
                               noise_sigma=args.sigma)
 
+
     if args.train:
         ## read data
         train_X, train_Y = tagger.get_train_data(args.train)
@@ -141,6 +142,9 @@ def save_tagger(nntagger, path_to_model):
 
 class SimpleBiltyTagger(object):
 
+    # turn dynamic allocation off by defining slots
+    __slots__ =  ['w2i', 'c2i', 'tag2idx', 'model', 'in_dim', 'c_in_dim', 'h_dim', 'activation', 'noise_sigma', 'h_layers', 'predictors', 'wembeds', 'cembeds', 'embeds_file', 'char_rnn']
+
     def __init__(self,in_dim,h_dim,c_in_dim,h_layers,embeds_file=None,
                  activation=dynet.tanh, noise_sigma=0.1,
                  word2id=None):
@@ -172,6 +176,7 @@ class SimpleBiltyTagger(object):
         self.w2i = w2i
         self.c2i = c2i
 
+    @profile
     def fit(self, train_X, train_Y, num_epochs, train_algo, val_X=None,
             val_Y=None, patience=2, model_path=None, seed=None,
             word_dropout_rate=0.25, learning_rate=0, trg_vectors=None,
@@ -217,14 +222,15 @@ class SimpleBiltyTagger(object):
                 sentence_trg_vectors.append(trg_vectors[trg_start_id:trg_start_id+len(example[0]), :])
                 trg_start_id += len(example[0])
             assert trg_start_id == len(trg_vectors),\
-                'Error: Idx %d is not at %d.' % (trg_start_id, len(trg_vectors))
+                'Error: Idx {} is not at {}.'.format(trg_start_id, len(trg_vectors))
 
-        print('Starting training for %d epochs...' % num_epochs)
+        print('Starting training for {} epochs...'.format(num_epochs))
         best_val_acc, epochs_no_improvement = 0., 0
         if val_X is not None and val_Y is not None and model_path is not None:
-            print('Using early stopping with patience of %d...' % patience)
+            print('Using early stopping with patience of {}...'.format(patience))
+
         for cur_iter in range(num_epochs):
-            bar = Bar('Training epoch %d/%d...' % (cur_iter + 1, num_epochs),
+            bar = Bar('Training epoch {}/{}...'.format(cur_iter + 1, num_epochs),
                       max=len(train_data), flush=True)
             total_loss=0.0
             total_tagged=0.0
@@ -274,17 +280,18 @@ class SimpleBiltyTagger(object):
                 val_accuracy = val_correct / val_total
 
                 if val_accuracy > best_val_acc:
-                    print('Accuracy %.4f is better than best val accuracy %.4f.' % (val_accuracy, best_val_acc))
+                    print('Accuracy {:.4f} is better than best val accuracy {:.4f}'.format(val_accuracy, best_val_acc))
                     best_val_acc = val_accuracy
                     epochs_no_improvement = 0
                     save_tagger(self, model_path)
                 else:
-                    print('Accuracy %.4f is worse than best val loss %.4f.' % (val_accuracy, best_val_acc))
+                    print('Accuracy {:.4f} is worse than best val loss {:.4f}.'.format(val_accuracy, best_val_acc))
                     epochs_no_improvement += 1
                 if epochs_no_improvement == patience:
-                    print('No improvement for %d epochs. Early stopping...' % epochs_no_improvement)
+                    print('No improvement for {} epochs. Early stopping...'.format(epochs_no_improvement))
                     break
 
+    @profile
     def initialize_graph(self, num_words=None, num_chars=None):
         """
         build graph and link to parameters
