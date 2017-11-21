@@ -176,7 +176,7 @@ class SimpleBiltyTagger(object):
         self.w2i = w2i
         self.c2i = c2i
 
-    @profile
+  
     def fit(self, train_X, train_Y, num_epochs, train_algo, val_X=None,
             val_Y=None, patience=2, model_path=None, seed=None,
             word_dropout_rate=0.25, learning_rate=0, trg_vectors=None,
@@ -291,7 +291,7 @@ class SimpleBiltyTagger(object):
                     print('No improvement for {} epochs. Early stopping...'.format(epochs_no_improvement))
                     break
 
-    @profile
+
     def initialize_graph(self, num_words=None, num_chars=None):
         """
         build graph and link to parameters
