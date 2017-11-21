@@ -78,8 +78,8 @@ class Amt3Tagger(object):
         self.char_rnn = None # RNN for character input
         self.task_ids = ["F0", "F1", "Ft"]
 
-    def add_adversarial_loss(self):
-        self.adv_layer = Layer(self.model, 2*self.h_dim, 2,
+    def add_adversarial_loss(self, num_domains=2):
+        self.adv_layer = Layer(self.model, 2*self.h_dim, num_domains,
                                activation=dynet.softmax, mlp=True)
 
     def pick_neg_log(self, pred, gold):
@@ -118,7 +118,7 @@ class Amt3Tagger(object):
         print("read training data",file=sys.stderr)
 
         training_algo = TRAINER_MAP[train_algo]
-
+        random.seed(seed)
         if learning_rate > 0:
             trainer = training_algo(self.model, learning_rate=learning_rate)
         else:
@@ -129,7 +129,7 @@ class Amt3Tagger(object):
 
         widCount = Counter()
         train_data = []
-        for task, task_dict in train_dict.items():
+        for task, task_dict in train_dict.items(): #task: eg. "F0"
             for key in ["X", "Y", "domain"]:
                 assert key in task_dict, "Error: %s is not available." % key
             examples, labels, domain_tags = task_dict["X"], task_dict["Y"], task_dict["domain"]
@@ -140,7 +140,7 @@ class Amt3Tagger(object):
                     widCount.update([w for w in sentence])
 
             # train data is a list of 4-tuples: (example, label, task_id, domain_id)
-            train_data += list(zip(examples, labels, [["F0"]*len(labels)][0], domain_tags))
+            train_data += list(zip(examples, labels, [[task]*len(labels)][0], domain_tags))
 
         # if we use target vectors, keep track of the targets per sentence
         if trg_vectors is not None:
@@ -464,7 +464,7 @@ class Amt3Tagger(object):
                     adv_input = [dynet.flip_gradient(adv_in) for adv_in in concat_layer]
                     adv_output = [self.adv_layer(adv_in) for adv_in in adv_input]
                     adv_loss = [self.pick_neg_log(adv_out, domain_id) for adv_out in adv_output]
-                    avg_adv_loss = dynet.average(adv_loss)
+                    avg_adv_loss = dynet.average(adv_loss) # sequence?
                     # print('Adversarial loss:', avg_adv_loss.value())
                     constraint += avg_adv_loss
                 return output, constraint
