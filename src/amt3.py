@@ -78,6 +78,10 @@ class Amt3Tagger(object):
         self.char_rnn = None # RNN for character input
         self.task_ids = ["F0", "F1", "Ft"]
 
+    def add_adversarial_loss(self):
+        self.adv_layer = Layer(self.model, 2*self.h_dim, 2,
+                               activation=dynet.softmax, mlp=True)
+
     def pick_neg_log(self, pred, gold):
         if not isinstance(gold, int):
             # calculate cross-entropy loss against the whole vector
@@ -90,13 +94,11 @@ class Amt3Tagger(object):
         self.w2i = w2i
         self.c2i = c2i
 
-    def fit(self, train1_X, train1_Y, num_epochs, train_algo,
-            train2_X=None, train2_Y=None,  # second task
-            train3_X=None, train3_Y=None,  # third task
+    def fit(self, train_dict, num_epochs, train_algo,
             val_X=None, val_Y=None, patience=2, model_path=None, seed=None,
             word_dropout_rate=0.25, learning_rate=0, trg_vectors=None,
             unsup_weight=1.0, clip_threshold=5.0,
-            orthogonality_weight=0.0):
+            orthogonality_weight=0.0, adversarial=False):
         """
         train the tagger
         :param trg_vectors: the prediction targets used for the unsupervised loss
@@ -104,9 +106,13 @@ class Amt3Tagger(object):
         :param unsup_weight: weight for the unsupervised consistency loss
                                     used in temporal ensembling
         :param clip_threshold: use gradient clipping with threshold (on if >0; default: 5.0)
-        :param train2_X: F1 input
-        :param train3_X: Ft input
-
+        :param adversarial: note: if we want to use adversarial, we have to
+                            call add_adversarial_loss before
+        :param train_dict: a dictionary mapping tasks ("F0", "F1", and "Ft")
+                           to a dictionary
+                           {"X": list of examples,
+                            "Y": list of labels,
+                            "domain": list of domain tag (0,1) of example}
         Three tasks are indexed as "F0", "F1" and "Ft"
         """
         print("read training data",file=sys.stderr)
@@ -121,31 +127,20 @@ class Amt3Tagger(object):
         if clip_threshold > 0:
             trainer.set_clip_threshold(clip_threshold)
 
-        # if we use word dropout keep track of counts
-        if word_dropout_rate > 0.0:
-            widCount = Counter()
-            for sentence, _ in train1_X:
-                widCount.update([w for w in sentence])
-            if train3_X:
-                for sentence, _ in train2_X:
+        widCount = Counter()
+        train_data = []
+        for task, task_dict in train_dict.items():
+            for key in ["X", "Y", "domain"]:
+                assert key in task_dict, "Error: %s is not available." % key
+            examples, labels, domain_tags = task_dict["X"], task_dict["Y"], task_dict["domain"]
+            assert len(examples) == len(labels)
+            if word_dropout_rate > 0.0:
+                # keep track of the counts for word dropout
+                for sentence, _ in examples:
                     widCount.update([w for w in sentence])
 
-        assert(len(train1_X)==len(train1_Y))
-
-        train_data = list(zip(train1_X,train1_Y, [["F0"]*len(train1_Y)][0])) # store X, Y and task_id, get out flat list
-
-        if train2_X:
-            # update word count for dropout, add data
-            for sentence, _ in train2_X:
-                widCount.update([w for w in sentence])
-            assert (len(train2_X) == len(train2_Y))
-            train_data += list(zip(train2_X, train2_Y, [["F1"]*len(train2_Y)][0]))
-        if train3_X:
-            for sentence, _ in train3_X:
-                widCount.update([w for w in sentence])
-            assert (len(train3_X) == len(train3_Y))
-            train_data += list(zip(train3_X, train3_Y, [["Ft"]*len(train3_Y)][0]))
-
+            # train data is a list of 4-tuples: (example, label, task_id, domain_id)
+            train_data += list(zip(examples, labels, [["F0"]*len(labels)][0], domain_tags))
 
         # if we use target vectors, keep track of the targets per sentence
         if trg_vectors is not None:
@@ -170,7 +165,7 @@ class Amt3Tagger(object):
             random.shuffle(random_indices)
 
             for i, idx in enumerate(random_indices):
-                (word_indices, char_indices), y, task_id = train_data[idx]
+                (word_indices, char_indices), y, task_id, domain_id = train_data[idx]
 
                 if word_dropout_rate > 0.0:
                     word_indices = [self.w2i["_UNK"] if
@@ -178,7 +173,8 @@ class Amt3Tagger(object):
                                         else w for w in word_indices]
                 output, constraint = self.predict(
                     word_indices, char_indices, task_id, train=True,
-                    orthogonality_weight=orthogonality_weight)
+                    orthogonality_weight=orthogonality_weight,
+                    domain_id=domain_id)
 
                 if len(y) == 1 and y[0] == 0:
                     # in temporal ensembling, we assign a dummy label of [0] for
@@ -385,9 +381,11 @@ class Amt3Tagger(object):
         return X, Y  # , org_X, org_Y - for now don't use
 
     def predict(self, word_indices, char_indices, task_id, train=False,
-                soft_labels=False, temperature=None, orthogonality_weight=0.0):
+                soft_labels=False, temperature=None, orthogonality_weight=0.0,
+                domain_id=None):
         """
         predict tags for a sentence represented as char+word embeddings
+        :param domain_id: Predict adversarial loss if domain id is provided.
         """
         dynet.renew_cg() # new graph
 
@@ -460,6 +458,14 @@ class Amt3Tagger(object):
                     constraint += squared_frobenius_norm1 + squared_frobenius_norm2
                     # print('Constraint with first matrix:', squared_frobenius_norm1.value())
                     # print('Constraint with second matrix:', squared_frobenius_norm2.value())
+
+                if domain_id:
+                    # flip the gradient when back-propagation through here
+                    adv_input = dynet.flip_gradient(concat_layer)
+                    adv_output = self.adv_layer(adv_input)
+                    adv_loss = self.pick_neg_log(adv_output, domain_id)
+                    print('Adversarial loss:', adv_loss.value())
+                    constraint += adv_loss
                 return output, constraint
 
             prev = forward_sequence
