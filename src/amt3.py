@@ -174,7 +174,7 @@ class Amt3Tagger(object):
                 output, constraint = self.predict(
                     word_indices, char_indices, task_id, train=True,
                     orthogonality_weight=orthogonality_weight,
-                    domain_id=domain_id)
+                    domain_id=domain_id if adversarial else None)
 
                 if len(y) == 1 and y[0] == 0:
                     # in temporal ensembling, we assign a dummy label of [0] for
@@ -459,13 +459,14 @@ class Amt3Tagger(object):
                     # print('Constraint with first matrix:', squared_frobenius_norm1.value())
                     # print('Constraint with second matrix:', squared_frobenius_norm2.value())
 
-                if domain_id:
-                    # flip the gradient when back-propagation through here
-                    adv_input = dynet.flip_gradient(concat_layer)
-                    adv_output = self.adv_layer(adv_input)
-                    adv_loss = self.pick_neg_log(adv_output, domain_id)
-                    print('Adversarial loss:', adv_loss.value())
-                    constraint += adv_loss
+                if domain_id is not None:
+                    # flip the gradient when back-propagating through here
+                    adv_input = [dynet.flip_gradient(adv_in) for adv_in in concat_layer]
+                    adv_output = [self.adv_layer(adv_in) for adv_in in adv_input]
+                    adv_loss = [self.pick_neg_log(adv_out, domain_id) for adv_out in adv_output]
+                    avg_adv_loss = dynet.average(adv_loss)
+                    # print('Adversarial loss:', avg_adv_loss.value())
+                    constraint += avg_adv_loss
                 return output, constraint
 
             prev = forward_sequence
