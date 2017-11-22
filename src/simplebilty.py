@@ -312,11 +312,11 @@ class SimpleBiltyTagger(object):
             num_words=len(set(embeddings.keys()).union(set(self.w2i.keys()))) # initialize all with embeddings
             # init model parameters and initialize them
             self.wembeds = self.model.add_lookup_parameters(
-                (num_words, self.in_dim),init=dynet.ConstInitializer(0.01), name="wembeds")
+                (num_words, self.in_dim),init=dynet.ConstInitializer(0.01))
 
             if self.c_in_dim > 0:
                 self.cembeds = self.model.add_lookup_parameters(
-                    (num_chars, self.c_in_dim),init=dynet.ConstInitializer(0.01), name="cembeds")
+                    (num_chars, self.c_in_dim),init=dynet.ConstInitializer(0.01))
                
             init=0
             l = len(embeddings.keys())
@@ -332,10 +332,10 @@ class SimpleBiltyTagger(object):
 
         else:
             self.wembeds = self.model.add_lookup_parameters(
-                (num_words, self.in_dim),init=dynet.ConstInitializer(0.01), name="wembeds")
+                (num_words, self.in_dim),init=dynet.ConstInitializer(0.01))
             if self.c_in_dim > 0:
                 self.cembeds = self.model.add_lookup_parameters(
-                    (num_chars, self.c_in_dim),init=dynet.ConstInitializer(0.01), name="cembeds")
+                    (num_chars, self.c_in_dim),init=dynet.ConstInitializer(0.01))
 
         # make it more flexible to add number of layers as specified by parameter
         layers = [] # inner layers
