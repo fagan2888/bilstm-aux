@@ -260,7 +260,7 @@ class SimpleBiltyTagger(object):
                     # both supervised and unsupervised input
                     targets = sentence_trg_vectors[idx]
                     assert len(output) == len(targets)
-                    other_loss = unsup_weight * dynet.average(
+                    other_loss = unsup_weight * dynet.esum(
                         [dynet.squared_distance(o, dynet.inputVector(t))
                          for o, t in zip(output, targets)])
                     loss += other_loss
