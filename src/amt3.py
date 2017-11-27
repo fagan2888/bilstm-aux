@@ -431,7 +431,7 @@ class Amt3Tagger(object):
         prev_rev = features
         num_layers = self.h_layers
         constraint = 0
-        avg_adv_loss = 0
+        adv_loss = 0
         for i in range(0,num_layers):
             predictor = self.predictors["inner"][i]
             forward_sequence, backward_sequence = predictor.predict_sequence(prev, prev_rev)
@@ -473,12 +473,11 @@ class Amt3Tagger(object):
 
                 if domain_id is not None:
                     # flip the gradient when back-propagating through here
-                    adv_input = [dynet.flip_gradient(concat_layer[-1])] # last state
-                    adv_output = [self.adv_layer(adv_in) for adv_in in adv_input]
-                    adv_loss = [self.pick_neg_log(adv_out, domain_id) for adv_out in adv_output]
-                    avg_adv_loss = dynet.average(adv_loss)
+                    adv_input = dynet.flip_gradient(concat_layer[-1]) # last state
+                    adv_output = self.adv_layer(adv_input)
+                    adv_loss = self.pick_neg_log(adv_output, domain_id)
                     #print('Adversarial loss:', avg_adv_loss.value())
-                return output, constraint, avg_adv_loss
+                return output, constraint, adv_loss
 
             prev = forward_sequence
             prev_rev = backward_sequence
