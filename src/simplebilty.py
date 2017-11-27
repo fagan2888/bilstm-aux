@@ -176,11 +176,10 @@ class SimpleBiltyTagger(object):
         self.w2i = w2i
         self.c2i = c2i
 
-  
     def fit(self, train_X, train_Y, num_epochs, train_algo, val_X=None,
             val_Y=None, patience=2, model_path=None, seed=None,
             word_dropout_rate=0.25, learning_rate=0, trg_vectors=None,
-            unsup_weight=1.0, clip_threshold=5.0):
+            unsup_weight=1.0, clip_threshold=5.0, variance_weights=None):
         """
         train the tagger
         :param trg_vectors: the prediction targets used for the unsupervised loss
@@ -190,6 +189,9 @@ class SimpleBiltyTagger(object):
         :param clip_threshold: use gradient clipping with threshold (on if >0; default: 5.0)
         """
         print("read training data",file=sys.stderr)
+
+        if variance_weights is not None:
+            print('First 20 variance weights:', variance_weights[:20])
 
         if seed:
             print(">>> using seed: ", seed, file=sys.stderr)
@@ -218,11 +220,18 @@ class SimpleBiltyTagger(object):
         if trg_vectors is not None:
             trg_start_id = 0
             sentence_trg_vectors = []
+            sentence_var_weights = []
             for i, (example, y) in enumerate(train_data):
                 sentence_trg_vectors.append(trg_vectors[trg_start_id:trg_start_id+len(example[0]), :])
+                if variance_weights is not None:
+                    sentence_var_weights.append(variance_weights[trg_start_id:trg_start_id+len(example[0])])
                 trg_start_id += len(example[0])
             assert trg_start_id == len(trg_vectors),\
                 'Error: Idx {} is not at {}.'.format(trg_start_id, len(trg_vectors))
+            assert len(sentence_trg_vectors) == len(train_X)
+            if variance_weights is not None:
+                assert trg_start_id == len(variance_weights)
+                assert len(sentence_var_weights) == len(train_X)
 
         print('Starting training for {} epochs...'.format(num_epochs))
         best_val_acc, epochs_no_improvement = 0., 0
@@ -260,10 +269,18 @@ class SimpleBiltyTagger(object):
                     # both supervised and unsupervised input
                     targets = sentence_trg_vectors[idx]
                     assert len(output) == len(targets)
-                    other_loss = unsup_weight * dynet.esum(
-                        [dynet.squared_distance(o, dynet.inputVector(t))
-                         for o, t in zip(output, targets)])
-                    loss += other_loss
+                    if variance_weights is not None:
+                        var_weights = sentence_var_weights[idx]
+                        assert len(output) == len(var_weights)
+                        # multiply the normalized mean variance with each loss
+                        other_loss = dynet.esum(
+                            [v * dynet.squared_distance(o, dynet.inputVector(t))
+                             for o, t, v in zip(output, targets, var_weights)])
+                    else:
+                        other_loss = dynet.esum(
+                            [dynet.squared_distance(o, dynet.inputVector(t))
+                             for o, t in zip(output, targets)])
+                    loss += other_loss * unsup_weight
 
                 total_loss += loss.value()
                 total_tagged += len(word_indices)
