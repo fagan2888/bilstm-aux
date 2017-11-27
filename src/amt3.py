@@ -27,15 +27,17 @@ def load_tagger(path_to_model):
     """
     myparams = pickle.load(open(path_to_model + ".params.pickle", "rb"))
     tagger = Amt3Tagger(myparams["in_dim"],
-                      myparams["h_dim"],
-                      myparams["c_in_dim"],
-                      myparams["h_layers"],
-                      activation=myparams["activation"])
+                        myparams["h_dim"],
+                        myparams["c_in_dim"],
+                        myparams["h_layers"],
+                        activation=myparams["activation"],
+                        add_hidden=myparams["add_hidden"])
     tagger.set_indices(myparams["w2i"],myparams["c2i"],myparams["tag2idx"])
     tagger.initialize_graph()
     tagger.model.populate(path_to_model + '.model')
     print("model loaded: {}".format(path_to_model), file=sys.stderr)
     return tagger
+
 
 def save_tagger(nntagger, path_to_model):
     """
@@ -50,7 +52,8 @@ def save_tagger(nntagger, path_to_model):
                 "in_dim": nntagger.in_dim,
                 "h_dim": nntagger.h_dim,
                 "c_in_dim": nntagger.c_in_dim,
-                "h_layers": nntagger.h_layers
+                "h_layers": nntagger.h_layers,
+                "add_hidden": nntagger.add_hidden
                 }
     pickle.dump(myparams, open(path_to_model + ".params.pickle", "wb" ) )
     print("model stored: {}".format(modelname), file=sys.stderr)
@@ -60,7 +63,7 @@ class Amt3Tagger(object):
 
     def __init__(self,in_dim,h_dim,c_in_dim,h_layers,embeds_file=None,
                  activation=dynet.tanh, noise_sigma=0.1,
-                 word2id=None, orthogonality_weight=0):
+                 word2id=None, add_hidden=False):
         self.w2i = {} if word2id is None else word2id  # word to index mapping
         self.c2i = {}  # char to index mapping
         self.tag2idx = {} # tag to tag_id mapping
@@ -77,10 +80,11 @@ class Amt3Tagger(object):
         self.embeds_file = embeds_file
         self.char_rnn = None # RNN for character input
         self.task_ids = ["F0", "F1", "Ft"]
+        self.add_hidden = add_hidden
 
     def add_adversarial_loss(self, num_domains=2):
         self.adv_layer = Layer(self.model, 2*self.h_dim, num_domains,
-                               activation=dynet.softmax, mlp=True)
+                               activation=dynet.softmax, mlp=self.h_dim)
 
     def pick_neg_log(self, pred, gold):
         if not isinstance(gold, int):
@@ -304,14 +308,18 @@ class Amt3Tagger(object):
         # store at which layer to predict task
         task_num_labels= len(self.tag2idx)
         output_layers_dict = {}
-        output_layers_dict["F0"] = FFSequencePredictor(Layer(self.model, self.h_dim*2, task_num_labels, dynet.softmax))
+        output_layers_dict["F0"] = FFSequencePredictor(Layer(
+            self.model, self.h_dim*2, task_num_labels, dynet.softmax,
+            mlp=self.h_dim if self.add_hidden else 0))
 
         # for simplicity always add additional outputs, even if they are then not used
         output_layers_dict["F1"] = FFSequencePredictor(
-                Layer(self.model, self.h_dim * 2, task_num_labels, dynet.softmax))
+                Layer(self.model, self.h_dim * 2, task_num_labels, dynet.softmax,
+                      mlp=self.h_dim if self.add_hidden else 0))
 
         output_layers_dict["Ft"] = FFSequencePredictor(
-                Layer(self.model, self.h_dim * 2, task_num_labels, dynet.softmax))
+                Layer(self.model, self.h_dim * 2, task_num_labels, dynet.softmax,
+                      mlp=self.h_dim if self.add_hidden else 0))
 
         if self.c_in_dim > 0:
             self.char_rnn = BiRNNSequencePredictor(
@@ -446,12 +454,17 @@ class Amt3Tagger(object):
                     temperature=temperature)
 
                 if orthogonality_weight != 0:
-                    # use the orthogonality constraint
-                    # get the weight matrix of the current output layer
-                    task_W = dynet.parameter(self.predictors["output_layers_dict"][task_id].network_builder.W)
-                    other_tasks_Ws = [dynet.parameter(
-                        self.predictors["output_layers_dict"][id_].network_builder.W)
-                        for id_ in self.task_ids if id_ != task_id]
+                    # put the orthogonality constraint either directly on the
+                    # output layer or on the hidden layer if it's an MLP
+                    builder = self.predictors["output_layers_dict"][task_id].network_builder
+                    task_param = builder.W_mlp if self.add_hidden else builder.W
+                    task_W = dynet.parameter(task_param)
+                    builders = [self.predictors["output_layers_dict"][id_].network_builder
+                                for id_ in self.task_ids if id_ != task_id]
+                    other_params = [b.W_mlp if self.add_hidden else b.W
+                                         for b in builders]
+                    other_tasks_Ws = [dynet.parameter(o) for o in other_params]
+
 
                     # calculate the matrix product of the task matrix with both others
                     matrix_product_1 = dynet.transpose(task_W) * other_tasks_Ws[0]
