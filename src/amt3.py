@@ -122,7 +122,7 @@ class Amt3Tagger(object):
         print("read training data",file=sys.stderr)
 
         training_algo = TRAINER_MAP[train_algo]
-        random.seed(seed)
+
         if learning_rate > 0:
             trainer = training_algo(self.model, learning_rate=learning_rate)
         else:
@@ -167,7 +167,7 @@ class Amt3Tagger(object):
         for cur_iter in range(num_epochs):
             bar = Bar('Training epoch {}/{}...'.format(cur_iter + 1, num_epochs),
                       max=len(train_data), flush=True)
-            total_loss, total_tagged, total_constraint = 0.0, 0.0, 0.0
+            total_loss, total_tagged, total_constraint, total_adversarial = 0.0, 0.0, 0.0, 0.0
 
             random_indices = np.arange(len(train_data))
             random.shuffle(random_indices)
@@ -180,7 +180,7 @@ class Amt3Tagger(object):
                                         (random.random() > (widCount.get(w)/(word_dropout_rate+widCount.get(w))))
                                         else w for w in word_indices]
 
-                output, constraint = self.predict(
+                output, constraint, adv = self.predict(
                     word_indices, char_indices, task_id, train=True,
                     orthogonality_weight=orthogonality_weight,
                     domain_id=domain_id if adversarial else None)
@@ -207,7 +207,10 @@ class Amt3Tagger(object):
                     # add the orthogonality constraint to the loss
                     loss += constraint * orthogonality_weight
                     total_constraint += constraint.value()
-                    
+                if adversarial:
+                    total_adversarial += adv.value()
+                    loss += adv
+
                 total_loss += loss.value() # for output
 
                 total_tagged += len(word_indices)
@@ -216,8 +219,8 @@ class Amt3Tagger(object):
                 trainer.update()
                 bar.next()
 
-            print("iter {}. Total loss: {:.3f}, total penalty: {:.3f}".format(
-                cur_iter, total_loss/total_tagged, total_constraint/total_tagged
+            print("iter {}. Total loss: {:.3f}, total penalty: {:.3f}, adv: {:.3f}".format(
+                cur_iter, total_loss/total_tagged, total_constraint/total_tagged, total_adversarial/total_tagged
             ), file=sys.stderr)
 
             if val_X is not None and val_Y is not None and model_path is not None:
@@ -436,6 +439,7 @@ class Amt3Tagger(object):
         prev_rev = features
         num_layers = self.h_layers
         constraint = 0
+        adv_loss = 0
         for i in range(0,num_layers):
             predictor = self.predictors["inner"][i]
             forward_sequence, backward_sequence = predictor.predict_sequence(prev, prev_rev)
@@ -482,13 +486,11 @@ class Amt3Tagger(object):
 
                 if domain_id is not None:
                     # flip the gradient when back-propagating through here
-                    adv_input = [dynet.flip_gradient(adv_in) for adv_in in concat_layer]
-                    adv_output = [self.adv_layer(adv_in) for adv_in in adv_input]
-                    adv_loss = [self.pick_neg_log(adv_out, domain_id) for adv_out in adv_output]
-                    avg_adv_loss = dynet.average(adv_loss) # sequence?
-                    # print('Adversarial loss:', avg_adv_loss.value())
-                    constraint += avg_adv_loss
-                return output, constraint
+                    adv_input = dynet.flip_gradient(concat_layer[-1]) # last state
+                    adv_output = self.adv_layer(adv_input)
+                    adv_loss = self.pick_neg_log(adv_output, domain_id)
+                    #print('Adversarial loss:', avg_adv_loss.value())
+                return output, constraint, adv_loss
 
             prev = forward_sequence
             prev_rev = backward_sequence
@@ -505,7 +507,7 @@ class Amt3Tagger(object):
 
         for i, ((word_indices, word_char_indices), gold_tag_indices) in enumerate(zip(test_X, test_Y)):
 
-            output, _ = self.predict(word_indices, word_char_indices, task_id)
+            output, _ , _= self.predict(word_indices, word_char_indices, task_id)
             predicted_tag_indices = [np.argmax(o.value()) for o in output]
 
             correct += sum([1 for (predicted, gold) in zip(predicted_tag_indices, gold_tag_indices) if predicted == gold])
@@ -519,7 +521,7 @@ class Amt3Tagger(object):
         """
         predictions = []
         for word_indices, word_char_indices in test_X:
-            output, _ = self.predict(word_indices, word_char_indices, task_id)
+            output, _ ,_ = self.predict(word_indices, word_char_indices, task_id)
             predictions += [o.value() if soft_labels else
                             int(np.argmax(o.value())) for o in output]
         return predictions
