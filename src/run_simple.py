@@ -17,7 +17,7 @@ c_in_dim=100
 h_layers=1
 iters=2
 
-tagger = SimpleBiltyTagger(in_dim, h_dim,c_in_dim,h_layers,embeds_file=None, trainer="sgd", clip_threshold=5.0)
+tagger = SimpleBiltyTagger(in_dim, h_dim,c_in_dim,h_layers,embeds_file=None, trainer="adam", clip_threshold=5.0)
 train_X, train_Y = tagger.get_train_data(train_data)
 tagger.initialize_graph()
 tagger.fit(train_X, train_Y, iters, seed=seed)

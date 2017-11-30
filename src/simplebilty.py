@@ -147,18 +147,15 @@ class SimpleBiltyTagger(object):
 
     def __init__(self,in_dim,h_dim,c_in_dim,h_layers,embeds_file=None,
                  activation=dynet.tanh, noise_sigma=0.1,
-                 word2id=None, trainer="adam", clip_threshold=5.0, learning_rate=0):
-        # if learning_rate = 0: use default TODO: make optimizer specific parameters
+                 word2id=None, trainer="adam", clip_threshold=5.0, learning_rate=0.001):
+        # use default Adam learning rate - TODO: support other optimizer-specific options
         self.w2i = {} if word2id is None else word2id  # word to index mapping
         self.c2i = {}  # char to index mapping
         self.tag2idx = {} # tag to tag_id mapping
         self.model = dynet.ParameterCollection() #init model
         # init trainer
         train_algo = TRAINER_MAP[trainer]
-        if learning_rate > 0:
-            self.trainer = train_algo(self.model, learning_rate=learning_rate)
-        else:
-            self.trainer = train_algo(self.model)
+        self.trainer = train_algo(self.model, learning_rate=learning_rate)
         if clip_threshold:
             self.trainer.set_clip_threshold(clip_threshold)
         self.in_dim = in_dim
