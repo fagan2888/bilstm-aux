@@ -83,7 +83,7 @@ def main():
         if args.model:
             tagger.initialize_graph()
         tagger.fit(train_X, train_Y, args.iters, args.trainer,
-                   learning_rate=args.learning_rate, seed=args.dynet_seed, word_dropout_rate=args.word_dropout_rate)
+                   seed=args.dynet_seed, word_dropout_rate=args.word_dropout_rate)
         if args.save:
             save_tagger(tagger, args.save)
 
@@ -143,15 +143,24 @@ def save_tagger(nntagger, path_to_model):
 class SimpleBiltyTagger(object):
 
     # turn dynamic allocation off by defining slots
-    __slots__ =  ['w2i', 'c2i', 'tag2idx', 'model', 'in_dim', 'c_in_dim', 'h_dim', 'activation', 'noise_sigma', 'h_layers', 'predictors', 'wembeds', 'cembeds', 'embeds_file', 'char_rnn']
+    __slots__ =  ['w2i', 'c2i', 'tag2idx', 'model', 'in_dim', 'c_in_dim', 'h_dim', 'activation', 'noise_sigma', 'h_layers', 'predictors', 'wembeds', 'cembeds', 'embeds_file', 'char_rnn', 'trainer']
 
     def __init__(self,in_dim,h_dim,c_in_dim,h_layers,embeds_file=None,
                  activation=dynet.tanh, noise_sigma=0.1,
-                 word2id=None):
+                 word2id=None, trainer="adam", clip_threshold=5.0, learning_rate=0):
+        # if learning_rate = 0: use default TODO: make optimizer specific parameters
         self.w2i = {} if word2id is None else word2id  # word to index mapping
         self.c2i = {}  # char to index mapping
         self.tag2idx = {} # tag to tag_id mapping
         self.model = dynet.ParameterCollection() #init model
+        # init trainer
+        train_algo = TRAINER_MAP[trainer]
+        if learning_rate > 0:
+            self.trainer = train_algo(self.model, learning_rate=learning_rate)
+        else:
+            self.trainer = train_algo(self.model)
+        if clip_threshold:
+            self.trainer.set_clip_threshold(clip_threshold)
         self.in_dim = in_dim
         self.h_dim = h_dim
         self.c_in_dim = c_in_dim
@@ -176,10 +185,10 @@ class SimpleBiltyTagger(object):
         self.w2i = w2i
         self.c2i = c2i
 
-    def fit(self, train_X, train_Y, num_epochs, trainer, val_X=None,
+    def fit(self, train_X, train_Y, num_epochs, val_X=None,
             val_Y=None, patience=2, model_path=None, seed=None,
-            word_dropout_rate=0.25, learning_rate=0, trg_vectors=None,
-            unsup_weight=1.0, clip_threshold=5.0, variance_weights=None,
+            word_dropout_rate=0.25, trg_vectors=None,
+            unsup_weight=1.0, variance_weights=None,
             labeled_weight_proportion=1.0):
         """
         train the tagger
@@ -200,9 +209,6 @@ class SimpleBiltyTagger(object):
         if seed:
             print(">>> using seed: ", seed, file=sys.stderr)
             random.seed(seed) #setting random seed
-
-        if clip_threshold > 0:
-            trainer.set_clip_threshold(clip_threshold)
 
         # if we use word dropout keep track of counts
         if word_dropout_rate > 0.0:
@@ -287,7 +293,7 @@ class SimpleBiltyTagger(object):
                 total_tagged += len(word_indices)
                 
                 loss.backward()
-                trainer.update()
+                self.trainer.update()
                 bar.next()
 
             print("iter {2} {0:>12}: {1:.2f}".format("total loss",total_loss/total_tagged,cur_iter), file=sys.stderr)
