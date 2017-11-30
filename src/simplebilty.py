@@ -155,7 +155,7 @@ class SimpleBiltyTagger(object):
         self.model = dynet.ParameterCollection() #init model
         # init trainer
         train_algo = TRAINER_MAP[trainer]
-        self.trainer = train_algo(self.model, learning_rate=learning_rate)
+        self.trainer = train_algo(self.model, learning_rate)
         if clip_threshold:
             self.trainer.set_clip_threshold(clip_threshold)
         self.in_dim = in_dim
