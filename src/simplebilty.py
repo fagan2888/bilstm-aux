@@ -179,7 +179,8 @@ class SimpleBiltyTagger(object):
     def fit(self, train_X, train_Y, num_epochs, train_algo, val_X=None,
             val_Y=None, patience=2, model_path=None, seed=None,
             word_dropout_rate=0.25, learning_rate=0, trg_vectors=None,
-            unsup_weight=1.0, clip_threshold=5.0, variance_weights=None):
+            unsup_weight=1.0, clip_threshold=5.0, variance_weights=None,
+            labeled_weight_proportion=1.0):
         """
         train the tagger
         :param trg_vectors: the prediction targets used for the unsupervised loss
@@ -187,6 +188,9 @@ class SimpleBiltyTagger(object):
         :param unsup_weight: weight for the unsupervised consistency loss
                                     used in temporal ensembling
         :param clip_threshold: use gradient clipping with threshold (on if >0; default: 5.0)
+        :param labeled_weight_proportion: proportion of the unsupervised weight
+                                          that should be assigned to labeled
+                                          examples
         """
         print("read training data",file=sys.stderr)
 
@@ -280,7 +284,11 @@ class SimpleBiltyTagger(object):
                         other_loss = dynet.esum(
                             [dynet.squared_distance(o, dynet.inputVector(t))
                              for o, t in zip(output, targets)])
-                    loss += other_loss * unsup_weight
+                    if len(y) == 1 and y[0] == 0:
+                        loss += other_loss * unsup_weight
+                    else:
+                        # assign the unsupervised weight for labeled examples
+                        loss += other_loss * unsup_weight * labeled_weight_proportion
 
                 total_loss += loss.value()
                 total_tagged += len(word_indices)
