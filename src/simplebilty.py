@@ -176,7 +176,7 @@ class SimpleBiltyTagger(object):
         self.w2i = w2i
         self.c2i = c2i
 
-    def fit(self, train_X, train_Y, num_epochs, train_algo, val_X=None,
+    def fit(self, train_X, train_Y, num_epochs, trainer, val_X=None,
             val_Y=None, patience=2, model_path=None, seed=None,
             word_dropout_rate=0.25, learning_rate=0, trg_vectors=None,
             unsup_weight=1.0, clip_threshold=5.0, variance_weights=None,
@@ -200,13 +200,6 @@ class SimpleBiltyTagger(object):
         if seed:
             print(">>> using seed: ", seed, file=sys.stderr)
             random.seed(seed) #setting random seed
-
-        training_algo = TRAINER_MAP[train_algo]
-
-        if learning_rate > 0:
-            trainer = training_algo(self.model, learning_rate=learning_rate)
-        else:
-            trainer = training_algo(self.model)
 
         if clip_threshold > 0:
             trainer.set_clip_threshold(clip_threshold)
