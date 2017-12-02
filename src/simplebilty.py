@@ -545,20 +545,24 @@ class SimpleBiltyTagger(object):
                             int(np.argmax(o.value())) for o in output]
         return predictions
 
-    def get_predictions_output(self, test_X, test_Y, output_filename):
+    def get_predictions_output(self, test_X, test_labels, output_filename):
         """
         get predictions to output to file
+        assume test_labels are not indices (as target domain can have tags that are not in source)
+        text_X: indices
+        test_labels: original labels
         """
         i2w = {self.w2i[w]: w for w in self.w2i.keys()}
         i2t = {self.tag2idx[t]: t for t in self.tag2idx.keys()}
 
         OUT = open(output_filename, "w")
-        for (word_indices, word_char_indices), gold_tag_ids in zip(test_X, test_Y):
+        for (word_indices, word_char_indices), gold_tags in zip(test_X, test_labels):
             output = self.predict(word_indices, word_char_indices)
             predicted_tag_ids = [int(np.argmax(o.value())) for o in output]
 
-            for word_id, tag_id, gold_tag_id in zip(word_indices, predicted_tag_ids, gold_tag_ids):
-                word, pred_tag, gold_tag = i2w[word_id], i2t[tag_id], i2t[gold_tag_id]
+            for word_id, tag_id, gold_tag in zip(word_indices, predicted_tag_ids, gold_tags):
+                known_tag_prefix = "{}" if gold_tag in self.tag2idx else "*{}"
+                word, pred_tag, gold_tag = i2w[word_id], i2t[tag_id], known_tag_prefix.format(gold_tag)
                 OUT.write("{}\t{}\t{}\n".format(word, gold_tag, pred_tag))
             OUT.write("\n")
         OUT.close()
