@@ -15,7 +15,7 @@ import sys
 import numpy as np
 import os
 import pickle
-import dynet
+import _dynet as dynet
 from collections import Counter
 
 from progress.bar import Bar

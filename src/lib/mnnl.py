@@ -2,7 +2,7 @@
 my NN library
 (based on Yoav's)
 """
-import dynet
+import _dynet as dynet
 import numpy as np
 
 import sys
