@@ -182,6 +182,9 @@ class SimpleBiltyTagger(object):
         self.w2i = w2i
         self.c2i = c2i
 
+    def cosine(self, e1, e2):
+        return dynet.cdiv(dynet.dot_product(e1, e2),(dynet.cmult(dynet.squared_norm(e1),dynet.squared_norm(e2))))
+
     def fit(self, train_X, train_Y, num_epochs, val_X=None,
             val_Y=None, patience=2, model_path=None, seed=None,
             word_dropout_rate=0.25, trg_vectors=None,
@@ -244,6 +247,8 @@ class SimpleBiltyTagger(object):
             total_loss=0.0
             total_tagged=0.0
 
+            total_other_loss, total_other_loss_weighted = 0.0,0.0
+
             random_indices = np.arange(len(train_data))
             random.shuffle(random_indices)
 
@@ -280,20 +285,38 @@ class SimpleBiltyTagger(object):
                         other_loss = dynet.esum(
                             [dynet.squared_distance(o, dynet.inputVector(t))
                              for o, t in zip(output, targets)])
-                    if len(y) == 1 and y[0] == 0:
-                        loss += other_loss * unsup_weight
-                    else:
-                        # assign the unsupervised weight for labeled examples
-                        loss += other_loss * unsup_weight * labeled_weight_proportion
 
-                total_loss += loss.value()
-                total_tagged += len(word_indices)
-                
+                    total_other_loss += other_loss.value()
+                    if len(y) == 1 and y[0] == 0: #unlab_ex
+                        other_loss += other_loss * unsup_weight
+                    else: #lab_ex
+                        # assign the unsupervised weight for labeled examples
+                        other_loss += other_loss * unsup_weight * labeled_weight_proportion
+                    # keep track for logging
+                    total_loss += loss.value() # main loss
+                    total_tagged += len(word_indices)
+                    total_other_loss_weighted += other_loss.value()
+
+                    # combine losses
+                    loss+= other_loss
+
+                else:
+                    # keep track for logging
+                    total_loss += loss.value()
+                    total_tagged += len(word_indices)
+
+
                 loss.backward()
                 self.trainer.update()
                 bar.next()
 
-            print("iter {2} {0:>12}: {1:.2f}".format("total loss",total_loss/total_tagged,cur_iter), file=sys.stderr)
+            if trg_vectors is None:
+                print("iter {2} {0:>12}: {1:.2f}".format("total loss", total_loss / total_tagged, cur_iter),
+                      file=sys.stderr)
+            else:
+                print("iter {2} {0:>12}: {1:.2f} unsupervised loss: {3:.2f} (weighted: {4:.2f})".format(
+                               "supervised loss",total_loss/total_tagged,cur_iter,
+                                total_other_loss/total_tagged, total_other_loss_weighted/total_tagged), file=sys.stderr)
 
             if val_X is not None and val_Y is not None and model_path is not None:
                 # get the best accuracy on the validation set
