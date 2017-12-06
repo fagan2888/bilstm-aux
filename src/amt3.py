@@ -31,9 +31,12 @@ def load_tagger(path_to_model):
                         myparams["c_in_dim"],
                         myparams["h_layers"],
                         activation=myparams["activation"],
-                        add_hidden=myparams["add_hidden"])
+                        add_hidden=myparams["add_hidden"],
+                        adversarial_domains=myparams["adversarial_domains"])
     tagger.set_indices(myparams["w2i"],myparams["c2i"],myparams["tag2idx"])
     tagger.initialize_graph()
+    if myparams["adversarial_domains"]:
+        tagger.add_adversarial_loss(myparams["adversarial_domains"])
     tagger.model.populate(path_to_model + '.model')
     print("model loaded: {}".format(path_to_model), file=sys.stderr)
     return tagger
@@ -53,6 +56,7 @@ def save_tagger(nntagger, path_to_model):
                 "h_dim": nntagger.h_dim,
                 "c_in_dim": nntagger.c_in_dim,
                 "h_layers": nntagger.h_layers,
+                "adversarial_domains": nntagger.adversarial_domains,
                 "add_hidden": nntagger.add_hidden
                 }
     pickle.dump(myparams, open(path_to_model + ".params.pickle", "wb" ) )
@@ -63,11 +67,17 @@ class Amt3Tagger(object):
 
     def __init__(self,in_dim,h_dim,c_in_dim,h_layers,embeds_file=None,
                  activation=dynet.tanh, noise_sigma=0.1,
-                 word2id=None, add_hidden=False):
+                 word2id=None, add_hidden=False,trainer="adam", clip_threshold=5.0, learning_rate=0.001,
+                 adversarial_domains=None):
         self.w2i = {} if word2id is None else word2id  # word to index mapping
         self.c2i = {}  # char to index mapping
         self.tag2idx = {} # tag to tag_id mapping
-        self.model = dynet.ParameterCollection() #init model
+        self.model = dynet.ParameterCollection()  # init model
+        # init trainer
+        train_algo = TRAINER_MAP[trainer]
+        self.trainer = train_algo(self.model, learning_rate)
+        if clip_threshold:
+            self.trainer.set_clip_threshold(clip_threshold)
         self.in_dim = in_dim
         self.h_dim = h_dim
         self.c_in_dim = c_in_dim
@@ -81,10 +91,13 @@ class Amt3Tagger(object):
         self.char_rnn = None # RNN for character input
         self.task_ids = ["F0", "F1", "Ft"]
         self.add_hidden = add_hidden
+        self.adversarial_domains=adversarial_domains
 
     def add_adversarial_loss(self, num_domains=2):
+        if not self.adversarial_domains:  # make sure they are set the latest here
+            self.adversarial_domains = num_domains
         self.adv_layer = Layer(self.model, 2*self.h_dim, num_domains,
-                               activation=dynet.softmax, mlp=self.h_dim)
+                               activation=dynet.softmax, mlp=self.h_dim if self.add_hidden else 0)
 
     def pick_neg_log(self, pred, gold):
         if not isinstance(gold, int):
@@ -98,9 +111,9 @@ class Amt3Tagger(object):
         self.w2i = w2i
         self.c2i = c2i
 
-    def fit(self, train_dict, num_epochs, train_algo,
+    def fit(self, train_dict, num_epochs,
             val_X=None, val_Y=None, patience=2, model_path=None, seed=None,
-            word_dropout_rate=0.25, learning_rate=0, trg_vectors=None,
+            word_dropout_rate=0.25, trg_vectors=None,
             unsup_weight=1.0, clip_threshold=5.0,
             orthogonality_weight=0.0, adversarial=False):
         """
@@ -109,7 +122,6 @@ class Amt3Tagger(object):
                             in temporal ensembling
         :param unsup_weight: weight for the unsupervised consistency loss
                                     used in temporal ensembling
-        :param clip_threshold: use gradient clipping with threshold (on if >0; default: 5.0)
         :param adversarial: note: if we want to use adversarial, we have to
                             call add_adversarial_loss before
         :param train_dict: a dictionary mapping tasks ("F0", "F1", and "Ft")
@@ -119,17 +131,7 @@ class Amt3Tagger(object):
                             "domain": list of domain tag (0,1) of example}
         Three tasks are indexed as "F0", "F1" and "Ft"
         """
-        print("read training data",file=sys.stderr)
-
-        training_algo = TRAINER_MAP[train_algo]
-
-        if learning_rate > 0:
-            trainer = training_algo(self.model, learning_rate=learning_rate)
-        else:
-            trainer = training_algo(self.model)
-
-        if clip_threshold > 0:
-            trainer.set_clip_threshold(clip_threshold)
+        print("read training data")
 
         widCount = Counter()
         train_data = []
@@ -167,10 +169,19 @@ class Amt3Tagger(object):
         for cur_iter in range(num_epochs):
             bar = Bar('Training epoch {}/{}...'.format(cur_iter + 1, num_epochs),
                       max=len(train_data), flush=True)
-            total_loss, total_tagged, total_constraint, total_adversarial = 0.0, 0.0, 0.0, 0.0
 
             random_indices = np.arange(len(train_data))
             random.shuffle(random_indices)
+
+            total_loss, total_tagged, total_constraint, total_adversarial = 0.0, 0.0, 0.0, 0.0
+
+            # log separate losses
+            log_losses = {}
+            log_total = {}
+            for task_id in self.task_ids:
+                log_losses[task_id] = 0.0
+                log_total[task_id] = 0
+
 
             for i, idx in enumerate(random_indices):
                 (word_indices, char_indices), y, task_id, domain_id = train_data[idx]
@@ -213,15 +224,21 @@ class Amt3Tagger(object):
 
                 total_loss += loss.value() # for output
 
+                log_losses[task_id] += total_loss
                 total_tagged += len(word_indices)
+                log_total[task_id] += total_tagged
+
                 
                 loss.backward()
-                trainer.update()
+                self.trainer.update()
                 bar.next()
 
             print("iter {}. Total loss: {:.3f}, total penalty: {:.3f}, adv: {:.3f}".format(
                 cur_iter, total_loss/total_tagged, total_constraint/total_tagged, total_adversarial/total_tagged
             ), file=sys.stderr)
+            print("F0: {0:.3f} F1: {1:.3f} Ft: {2:.3f}".format(log_losses[self.task_ids[0]]/ log_total[self.task_ids[0]],
+                                                               log_losses[self.task_ids[1]] / log_total[self.task_ids[1]],
+                                                               log_losses[self.task_ids[2]] / log_total[self.task_ids[2]]))
 
             if val_X is not None and val_Y is not None and model_path is not None:
                 # get the best accuracy on the validation set
@@ -323,7 +340,6 @@ class Amt3Tagger(object):
         output_layers_dict["Ft"] = FFSequencePredictor(
                 Layer(self.model, self.h_dim * 2, task_num_labels, dynet.softmax,
                       mlp=self.h_dim if self.add_hidden else 0))
-
         if self.c_in_dim > 0:
             self.char_rnn = BiRNNSequencePredictor(
                 dynet.CoupledLSTMBuilder(
