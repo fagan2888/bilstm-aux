@@ -175,6 +175,7 @@ class Amt3Tagger(object):
             random.shuffle(random_indices)
 
             total_loss, total_tagged, total_constraint, total_adversarial = 0.0, 0.0, 0.0, 0.0
+            total_orth_constr = 0 # count how many updates
 
             # log separate losses
             log_losses = {}
@@ -215,10 +216,12 @@ class Amt3Tagger(object):
                          for o, t in zip(output, targets)])
                     loss += other_loss
 
-                if orthogonality_weight != 0.0:
+                if orthogonality_weight != 0.0 and task_id != 'Ft':
                     # add the orthogonality constraint to the loss
+                    total_constraint += constraint.value() * orthogonality_weight
+                    total_orth_constr += 1
                     loss += constraint * orthogonality_weight
-                    total_constraint += constraint.value()
+
                 if adversarial:
                     total_adversarial += adv.value() * adversarial_weight
                     loss += adv * adversarial_weight
@@ -234,8 +237,8 @@ class Amt3Tagger(object):
                 self.trainer.update()
                 bar.next()
 
-            print("iter {}. Total loss: {:.3f}, total penalty: {:.3f}, adv: {:.3f}".format(
-                cur_iter, total_loss/total_tagged, total_constraint/total_tagged, total_adversarial/total_tagged
+            print("iter {}. Total loss: {:.3f}, total penalty: {:.3f}, total weighted adv loss: {:.3f}".format(
+                cur_iter, total_loss/total_tagged, total_constraint/total_orth_constr, total_adversarial/total_tagged
             ), file=sys.stderr)
             print("F0: {0:.3f} F1: {1:.3f} Ft: {2:.3f}".format(log_losses[self.task_ids[0]]/ log_total[self.task_ids[0]],
                                                                log_losses[self.task_ids[1]] / log_total[self.task_ids[1]],
@@ -474,32 +477,27 @@ class Amt3Tagger(object):
                     concat_layer, soft_labels=soft_labels,
                     temperature=temperature)
 
-                if orthogonality_weight != 0:
+                if orthogonality_weight != 0 and task_id != "Ft":
                     # put the orthogonality constraint either directly on the
                     # output layer or on the hidden layer if it's an MLP
-                    builder = self.predictors["output_layers_dict"][task_id].network_builder
+                    # use orthogonality_weight only between F0 and F1
+                    builder = self.predictors["output_layers_dict"]["F0"].network_builder
                     task_param = builder.W_mlp if self.add_hidden else builder.W
                     task_W = dynet.parameter(task_param)
-                    builders = [self.predictors["output_layers_dict"][id_].network_builder
-                                for id_ in self.task_ids if id_ != task_id]
-                    other_params = [b.W_mlp if self.add_hidden else b.W
-                                         for b in builders]
-                    other_tasks_Ws = [dynet.parameter(o) for o in other_params]
 
+                    builder = self.predictors["output_layers_dict"]["F1"].network_builder
+                    other_param = builder.W_mlp if self.add_hidden else builder.W
+                    other_task_W = dynet.parameter(other_param)
 
-                    # calculate the matrix product of the task matrix with both others
-                    matrix_product_1 = dynet.transpose(task_W) * other_tasks_Ws[0]
-                    matrix_product_2 = dynet.transpose(task_W) * other_tasks_Ws[1]
+                    # calculate the matrix product of the task matrix with the other
+                    matrix_product_1 = dynet.transpose(task_W) * other_task_W
 
                     # take the squared Frobenius norm by squaring
                     # every element and then summing them
-                    squared_frobenius_norm1 = dynet.sum_elems(
-                        dynet.square(matrix_product_1))
-                    squared_frobenius_norm2 = dynet.sum_elems(
-                        dynet.square(matrix_product_2))
-                    constraint += squared_frobenius_norm1 + squared_frobenius_norm2
-                    # print('Constraint with first matrix:', squared_frobenius_norm1.value())
-                    # print('Constraint with second matrix:', squared_frobenius_norm2.value())
+                    squared_frobenius_norm = dynet.sum_elems(dynet.square(matrix_product_1))
+                    constraint = squared_frobenius_norm
+
+                    #print('Constraint with first matrix:', squared_frobenius_norm.value())
 
                 if domain_id is not None:
                     # flip the gradient when back-propagating through here
@@ -507,6 +505,7 @@ class Amt3Tagger(object):
                     adv_output = self.adv_layer(adv_input)
                     adv_loss = self.pick_neg_log(adv_output, domain_id)
                     #print('Adversarial loss:', avg_adv_loss.value())
+
                 return output, constraint, adv_loss
 
             prev = forward_sequence
