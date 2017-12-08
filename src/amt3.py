@@ -237,12 +237,18 @@ class Amt3Tagger(object):
                 self.trainer.update()
                 bar.next()
 
-            print("iter {}. Total loss: {:.3f}, total penalty: {:.3f}, total weighted adv loss: {:.3f}".format(
-                cur_iter, total_loss/total_tagged, total_constraint/total_orth_constr, total_adversarial/total_tagged
-            ), file=sys.stderr)
-            print("F0: {0:.3f} F1: {1:.3f} Ft: {2:.3f}".format(log_losses[self.task_ids[0]]/ log_total[self.task_ids[0]],
-                                                               log_losses[self.task_ids[1]] / log_total[self.task_ids[1]],
-                                                               log_losses[self.task_ids[2]] / log_total[self.task_ids[2]]))
+            if adversarial and orthogonality_weight:
+                print("iter {}. Total loss: {:.3f}, total penalty: {:.3f}, total weighted adv loss: {:.3f}".format(
+                    cur_iter, total_loss/total_tagged, total_constraint/total_orth_constr, total_adversarial/total_tagged
+                ), file=sys.stderr)
+            elif orthogonality_weight:
+                print("iter {}. Total loss: {:.3f}, total penalty: {:.3f}".format(
+                    cur_iter, total_loss/total_tagged, total_constraint/total_orth_constr), file=sys.stderr)
+            else:
+                print("iter {}. Total loss: {:.3f} ".format(cur_iter, total_loss/total_tagged), file=sys.stderr)
+
+            for task_id in self.task_ids:                
+                print("{0}: {1:.3f}".format(task_id, log_losses[task_id]/ log_total[task_id])),
 
             if val_X is not None and val_Y is not None and model_path is not None:
                 # get the best accuracy on the validation set
