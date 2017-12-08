@@ -115,7 +115,7 @@ class Amt3Tagger(object):
             val_X=None, val_Y=None, patience=2, model_path=None, seed=None,
             word_dropout_rate=0.25, trg_vectors=None,
             unsup_weight=1.0, clip_threshold=5.0,
-            orthogonality_weight=0.0, adversarial=False):
+            orthogonality_weight=0.0, adversarial=False, adversarial_weight=1.0):
         """
         train the tagger
         :param trg_vectors: the prediction targets used for the unsupervised loss
@@ -123,7 +123,8 @@ class Amt3Tagger(object):
         :param unsup_weight: weight for the unsupervised consistency loss
                                     used in temporal ensembling
         :param adversarial: note: if we want to use adversarial, we have to
-                            call add_adversarial_loss before
+                            call add_adversarial_loss before;
+        :param adversarial_weight: 1 by default (do not weigh adv loss)
         :param train_dict: a dictionary mapping tasks ("F0", "F1", and "Ft")
                            to a dictionary
                            {"X": list of examples,
@@ -219,8 +220,8 @@ class Amt3Tagger(object):
                     loss += constraint * orthogonality_weight
                     total_constraint += constraint.value()
                 if adversarial:
-                    total_adversarial += adv.value()
-                    loss += adv
+                    total_adversarial += adv.value() * adversarial_weight
+                    loss += adv * adversarial_weight
 
                 total_loss += loss.value() # for output
 
@@ -635,3 +636,24 @@ class Amt3Tagger(object):
         train_words, train_tags = self.__get_instances_from_file(train_data)
         return self.get_train_data_from_instances(train_words, train_tags)
 
+    def get_predictions_output(self, test_X, test_labels, output_filename, task_id="F0"):
+        """
+        get predictions to output to file
+        assume test_labels are not indices (as target domain can have tags that are not in source)
+        text_X: indices
+        test_labels: original labels
+        """
+        i2w = {self.w2i[w]: w for w in self.w2i.keys()}
+        i2t = {self.tag2idx[t]: t for t in self.tag2idx.keys()}
+
+        OUT = open(output_filename, "w")
+        for (word_indices, word_char_indices), gold_tags in zip(test_X, test_labels):
+            output, _, _ = self.predict(word_indices, word_char_indices, task_id)
+            predicted_tag_ids = [int(np.argmax(o.value())) for o in output]
+
+            for word_id, tag_id, gold_tag in zip(word_indices, predicted_tag_ids, gold_tags):
+                known_tag_prefix = "{}" if gold_tag in self.tag2idx else "*{}"
+                word, pred_tag, gold_tag = i2w[word_id], i2t[tag_id], known_tag_prefix.format(gold_tag)
+                OUT.write("{}\t{}\t{}\n".format(word, gold_tag, pred_tag))
+            OUT.write("\n")
+        OUT.close()
