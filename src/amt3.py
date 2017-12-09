@@ -247,8 +247,9 @@ class Amt3Tagger(object):
             else:
                 print("iter {}. Total loss: {:.3f} ".format(cur_iter, total_loss/total_tagged), file=sys.stderr)
 
-            for task_id in self.task_ids:                
-                print("{0}: {1:.3f}".format(task_id, log_losses[task_id]/ log_total[task_id])),
+            for task_id in self.task_ids:
+                if log_total[task_id] > 0:
+                    print("{0}: {1:.3f}".format(task_id, log_losses[task_id]/ log_total[task_id]))
 
             if val_X is not None and val_Y is not None and model_path is not None:
                 # get the best accuracy on the validation set
