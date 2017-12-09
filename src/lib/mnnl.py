@@ -77,7 +77,7 @@ class Layer:
         W = dynet.parameter(self.W)
         b = dynet.parameter(self.b)
 
-        logits = W*x_in + b
+        logits = (W*x_in + b) + dynet.scalarInput(1e-15)
         if soft_labels and temperature:
             # calculate the soft labels smoothed with the temperature
             # see Distilling the Knowledge in a Neural Network

@@ -5,6 +5,7 @@
 
 from simplebilty import SimpleBiltyTagger
 from simplebilty import load_tagger, save_tagger
+import dynet as dynet
 
 import random
 ### Use --dynet-seed $SEED
