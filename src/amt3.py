@@ -147,13 +147,8 @@ class Amt3Tagger(object):
                 for sentence, _ in examples:
                     widCount.update([w for w in sentence])
 
-            if bootstrap:
-                # train data is a list of 4-tuples: (example, label, task_id, domain_id)
-                train_data += list(zip(examples, labels, [[task]*len(labels)][0], domain_tags))
-            else:
-                examples = train_dict["src"]["X"]
-                train_data =  list(zip(examples, train_dict["src"]["Y"], ['src'] * len(examples), train_dict["src"]["domain"]))
-                # print(train_data[0])
+            # train data is a list of 4-tuples: (example, label, task_id, domain_id)
+            train_data += list(zip(examples, labels, [[task]*len(labels)][0], domain_tags))
 
         # if we use target vectors, keep track of the targets per sentence
         if trg_vectors is not None:
@@ -267,7 +262,7 @@ class Amt3Tagger(object):
 
                     total_loss += loss.value() # for output
                     total_tagged += len(word_indices)
-                    
+
                     loss.backward()
                     self.trainer.update()
                     bar.next()
