@@ -115,7 +115,7 @@ class Amt3Tagger(object):
             val_X=None, val_Y=None, patience=2, model_path=None, seed=None,
             word_dropout_rate=0.25, trg_vectors=None,
             unsup_weight=1.0, clip_threshold=5.0,
-            orthogonality_weight=0.0, adversarial=False, adversarial_weight=1.0):
+            orthogonality_weight=0.0, adversarial=False, adversarial_weight=1.0, ignore_src_Ft=False):
         """
         train the tagger
         :param trg_vectors: the prediction targets used for the unsupervised loss
@@ -125,6 +125,7 @@ class Amt3Tagger(object):
         :param adversarial: note: if we want to use adversarial, we have to
                             call add_adversarial_loss before;
         :param adversarial_weight: 1 by default (do not weigh adv loss)
+        :param ignore_src_Ft: if asymm.tri. 2nd stage, do not further train Ft on 'src'
         :param train_dict: a dictionary mapping tasks ("F0", "F1", and "Ft")
                            to a dictionary
                            {"X": list of examples,
@@ -245,6 +246,9 @@ class Amt3Tagger(object):
                     # bootstrap=False, the output contains list of outputs one for each task
                     assert trg_vectors is None, 'temporal ensembling not implemented for bootstrap=False'
                     loss = dynet.scalarInput(1) #initialize
+                    if ignore_src_Ft:
+                        output = output[:-1] # ignore last = Ft when further training with 'src'
+
                     for t_i, output_t in enumerate(output):
                         loss += dynet.esum([self.pick_neg_log(pred, gold) for
                                            pred, gold in zip(output_t, y)])
