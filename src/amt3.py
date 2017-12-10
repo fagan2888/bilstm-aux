@@ -115,7 +115,7 @@ class Amt3Tagger(object):
             val_X=None, val_Y=None, patience=2, model_path=None, seed=None,
             word_dropout_rate=0.25, trg_vectors=None,
             unsup_weight=1.0, clip_threshold=5.0,
-            orthogonality_weight=0.0, adversarial=False, adversarial_weight=1.0):
+            orthogonality_weight=0.0, adversarial=False, adversarial_weight=1.0, bootstrap=False):
         """
         train the tagger
         :param trg_vectors: the prediction targets used for the unsupervised loss
@@ -125,6 +125,7 @@ class Amt3Tagger(object):
         :param adversarial: note: if we want to use adversarial, we have to
                             call add_adversarial_loss before;
         :param adversarial_weight: 1 by default (do not weigh adv loss)
+        :param bootstrap: if False feed all samples to all output nodes
         :param train_dict: a dictionary mapping tasks ("F0", "F1", and "Ft")
                            to a dictionary
                            {"X": list of examples,
@@ -146,8 +147,13 @@ class Amt3Tagger(object):
                 for sentence, _ in examples:
                     widCount.update([w for w in sentence])
 
-            # train data is a list of 4-tuples: (example, label, task_id, domain_id)
-            train_data += list(zip(examples, labels, [[task]*len(labels)][0], domain_tags))
+            if bootstrap:
+                # train data is a list of 4-tuples: (example, label, task_id, domain_id)
+                train_data += list(zip(examples, labels, [[task]*len(labels)][0], domain_tags))
+            else:
+                examples = train_dict["src"]["X"]
+                train_data =  list(zip(examples, train_dict["src"]["Y"], ['src'] * len(examples), train_dict["src"]["domain"]))
+                # print(train_data[0])
 
         # if we use target vectors, keep track of the targets per sentence
         if trg_vectors is not None:
@@ -198,44 +204,74 @@ class Amt3Tagger(object):
                     orthogonality_weight=orthogonality_weight,
                     domain_id=domain_id if adversarial else None)
 
-                if len(y) == 1 and y[0] == 0:
-                    # in temporal ensembling, we assign a dummy label of [0] for
-                    # unlabeled sequences; we skip the supervised loss for these
-                    loss = dynet.scalarInput(0)
+                if task_id != 'src':
+
+                    if len(y) == 1 and y[0] == 0:
+                        # in temporal ensembling, we assign a dummy label of [0] for
+                        # unlabeled sequences; we skip the supervised loss for these
+                        loss = dynet.scalarInput(0)
+                    else:
+                        loss = dynet.esum([self.pick_neg_log(pred,gold) for
+                                              pred, gold in zip(output, y)])
+
+                    if trg_vectors is not None:
+                        # the consistency loss in temporal ensembling is used for
+                        # both supervised and unsupervised input
+                        targets = sentence_trg_vectors[idx]
+                        assert len(output) == len(targets)
+                        other_loss = unsup_weight * dynet.average(
+                            [dynet.squared_distance(o, dynet.inputVector(t))
+                             for o, t in zip(output, targets)])
+                        loss += other_loss
+
+                    if orthogonality_weight != 0.0 and task_id != 'Ft':
+                        # add the orthogonality constraint to the loss
+                        total_constraint += constraint.value() * orthogonality_weight
+                        total_orth_constr += 1
+                        loss += constraint * orthogonality_weight
+
+                    if adversarial:
+                        total_adversarial += adv.value() * adversarial_weight
+                        loss += adv * adversarial_weight
+
+                    total_loss += loss.value() # for output
+
+                    log_losses[task_id] += total_loss
+                    total_tagged += len(word_indices)
+                    log_total[task_id] += total_tagged
+
+
+                    loss.backward()
+                    self.trainer.update()
+                    bar.next()
                 else:
-                    loss = dynet.esum([self.pick_neg_log(pred,gold) for
-                                          pred, gold in zip(output, y)])
+                    # bootstrap=False, the output contains list of outputs one for each task
+                    assert trg_vectors is None, 'temporal ensembling not implemented for bootstrap=False'
+                    loss = dynet.scalarInput(1) #initialize
+                    for i, output_t in enumerate(output):
+                        loss += dynet.esum([self.pick_neg_log(pred, gold) for
+                                           pred, gold in zip(output_t, y)])
+                        task_id = self.task_ids[i]
+                        log_losses[task_id] += total_loss
+                        log_total[task_id] += total_tagged
 
-                if trg_vectors is not None:
-                    # the consistency loss in temporal ensembling is used for
-                    # both supervised and unsupervised input
-                    targets = sentence_trg_vectors[idx]
-                    assert len(output) == len(targets)
-                    other_loss = unsup_weight * dynet.average(
-                        [dynet.squared_distance(o, dynet.inputVector(t))
-                         for o, t in zip(output, targets)])
-                    loss += other_loss
+                    if orthogonality_weight != 0.0:
+                        # add the orthogonality constraint to the loss
+                        total_constraint += constraint.value() * orthogonality_weight
+                        total_orth_constr += 1
+                        loss += constraint * orthogonality_weight
 
-                if orthogonality_weight != 0.0 and task_id != 'Ft':
-                    # add the orthogonality constraint to the loss
-                    total_constraint += constraint.value() * orthogonality_weight
-                    total_orth_constr += 1
-                    loss += constraint * orthogonality_weight
+                    if adversarial:
+                        total_adversarial += adv.value() * adversarial_weight
+                        loss += adv * adversarial_weight
 
-                if adversarial:
-                    total_adversarial += adv.value() * adversarial_weight
-                    loss += adv * adversarial_weight
+                    total_loss += loss.value() # for output
+                    total_tagged += len(word_indices)
+                    
+                    loss.backward()
+                    self.trainer.update()
+                    bar.next()
 
-                total_loss += loss.value() # for output
-
-                log_losses[task_id] += total_loss
-                total_tagged += len(word_indices)
-                log_total[task_id] += total_tagged
-
-                
-                loss.backward()
-                self.trainer.update()
-                bar.next()
 
             if adversarial and orthogonality_weight:
                 print("iter {}. Total loss: {:.3f}, total penalty: {:.3f}, total weighted adv loss: {:.3f}".format(
@@ -476,13 +512,25 @@ class Amt3Tagger(object):
                 backward_sequence = [self.activation(s) for s in backward_sequence]
 
             if i == output_expected_at_layer:
-                output_predictor = self.predictors["output_layers_dict"][task_id]
+
                 concat_layer = [dynet.concatenate([f, b]) for f, b in zip(forward_sequence,reversed(backward_sequence))]
                 if train and self.noise_sigma > 0.0:
                     concat_layer = [dynet.noise(fe,self.noise_sigma) for fe in concat_layer]
-                output = output_predictor.predict_sequence(
-                    concat_layer, soft_labels=soft_labels,
-                    temperature=temperature)
+
+                if task_id != "src":
+                    output_predictor = self.predictors["output_layers_dict"][task_id]
+                    output = output_predictor.predict_sequence(
+                        concat_layer, soft_labels=soft_labels,
+                        temperature=temperature)
+                else:
+                    # one src example for all three outputs
+                    output = []  # in this case it is a list
+                    for t_id in self.task_ids:
+                        output_predictor = self.predictors["output_layers_dict"][t_id]
+                        output_t = output_predictor.predict_sequence(
+                            concat_layer, soft_labels=soft_labels,
+                            temperature=temperature)
+                        output.append(output_t)
 
                 if orthogonality_weight != 0 and task_id != "Ft":
                     # put the orthogonality constraint either directly on the
@@ -513,6 +561,7 @@ class Amt3Tagger(object):
                     adv_loss = self.pick_neg_log(adv_output, domain_id)
                     #print('Adversarial loss:', avg_adv_loss.value())
 
+                # output is list if task_id = 'src'
                 return output, constraint, adv_loss
 
             prev = forward_sequence
