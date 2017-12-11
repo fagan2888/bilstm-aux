@@ -202,7 +202,7 @@ class Amt3Tagger(object):
                     orthogonality_weight=orthogonality_weight,
                     domain_id=domain_id if adversarial else None)
 
-                if task_id != 'src':
+                if task_id not in ['src','trg']:
 
                     if len(y) == 1 and y[0] == 0:
                         # in temporal ensembling, we assign a dummy label of [0] for
@@ -249,7 +249,7 @@ class Amt3Tagger(object):
                     if ignore_src_Ft:
                         output = output[:-1] # ignore last = Ft when further training with 'src'
 
-                    for t_i, output_t in enumerate(output):
+                    for t_i, output_t in enumerate(output): # get loss for each task
                         loss += dynet.esum([self.pick_neg_log(pred, gold) for
                                            pred, gold in zip(output_t, y)])
                         task_id = self.task_ids[t_i]
@@ -518,7 +518,7 @@ class Amt3Tagger(object):
                 if train and self.noise_sigma > 0.0:
                     concat_layer = [dynet.noise(fe,self.noise_sigma) for fe in concat_layer]
 
-                if task_id != "src":
+                if task_id not in ["src","trg"]:
                     output_predictor = self.predictors["output_layers_dict"][task_id]
                     output = output_predictor.predict_sequence(
                         concat_layer, soft_labels=soft_labels,
