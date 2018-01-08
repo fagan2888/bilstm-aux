@@ -171,7 +171,7 @@ class SimpleBiltyTagger(object):
         self.char_rnn = None # RNN for character input
 
     def pick_neg_log(self, pred, gold):
-        if not isinstance(gold, int):
+        if hasattr(gold,"__len__"):
             # calculate cross-entropy loss against the whole vector
             dy_gold = dynet.inputVector(gold)
             return -dynet.sum_elems(dynet.cmult(dy_gold, dynet.log(pred)))
